@@ -210,13 +210,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const mk = () => { const c = document.createElement("canvas"); return [c, c.getContext("2d", { willReadFrequently: true })]; };
 
 let W = 1280, H = 720, SC = 1;
-const MW = 320; let MH = 180, MN = MW * MH;
+const MW = 400; let MH = 225, MN = MW * MH;
 const [personC, personX] = mk(), [maskC, maskX] = mk(), [smallC, smallX] = mk(), [smallBgC, smallBgX] = mk(), [stillC, stillX] = mk(), [edgeC, edgeX] = mk();
 let edgeImg = null, warmTick = 0;
 let maskImg = null, conf = null, smallPix = null, noiseF = null, maskFresh = true;
 
 let stream = null, running = false, bgReady = false;
-let state = "visible", animStart = 0, countdown = 0, recLeft = 0, quality = 1;
+let state = "visible", animStart = 0, countdown = 0, recLeft = 0, quality = 1, capturing = false;
 let segmenter = null, gesture = null;
 
 /* ================= Start ================= */
@@ -317,34 +317,42 @@ let bgUrl = null, bgDur = 5, curV = null, nxtV = null, fadeStart = 0, fadeA = 0;
 
 btnBg.onclick = captureBg;
 async function captureBg(){
-  if (!running || countdown || recLeft || state !== "visible") return;
-  btnBg.disabled = true;
-  for (let c = 5; c >= 1; c--){ countdown = c; setStatus(`Keluar dari frame… ${c}`); await sleep(1000); }
-  countdown = 0;
-
-  const mime = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find(m => MediaRecorder.isTypeSupported(m));
-  const rec = new MediaRecorder(new MediaStream(stream.getVideoTracks()), { mimeType: mime, videoBitsPerSecond: 8e6 });
-  const chunks = [];
-  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
-  const stopped = new Promise(r => rec.onstop = r);
-  const t0 = performance.now();
-  rec.start();
-  for (let s = 5; s >= 1; s--){
-    recLeft = s; setStatus(`Ngerekam ruangan kosong… ${s}`);
-    if (s === 3) stillX.drawImage(video, 0, 0, W, H);
-    await sleep(1000);
-  }
-  rec.stop(); await stopped; recLeft = 0;
-  const secs = (performance.now() - t0) / 1000;
-
-  const blob = new Blob(chunks, { type: mime });
-  await useBg(blob, secs);
-  btnBg.disabled = false;
-  setStatus("Ruangan kosong kerekam. Balik ke posisi, terus jentik buat hilang.");
+  if (!running || capturing || countdown || recLeft || state !== "visible") return;
+  capturing = true; btnBg.disabled = true;
+  let rec = null;
   try{
-    const still = await new Promise(r => stillC.toBlob(r, "image/jpeg", 0.92));
-    await idbSet("bg", { blob, secs, still });
-  }catch(e){ console.warn("Gagal nyimpen background", e); }
+    for (let c = 5; c >= 1; c--){ countdown = c; setStatus(`Keluar dari frame… ${c}`); await sleep(1000); }
+    countdown = 0;
+
+    const mime = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find(m => MediaRecorder.isTypeSupported(m));
+    rec = new MediaRecorder(new MediaStream(stream.getVideoTracks()), { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: 8e6 });
+    const chunks = [];
+    rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+    const stopped = new Promise(r => rec.onstop = r);
+    const t0 = performance.now();
+    rec.start();
+    for (let s = 5; s >= 1; s--){
+      recLeft = s; setStatus(`Ngerekam ruangan kosong… ${s}`);
+      if (s === 3) stillX.drawImage(video, 0, 0, W, H);
+      await sleep(1000);
+    }
+    rec.stop(); await stopped; recLeft = 0;
+    const secs = (performance.now() - t0) / 1000;
+
+    const blob = new Blob(chunks, { type: mime || "video/webm" });
+    await useBg(blob, secs);
+    setStatus("Ruangan kosong kerekam. Balik ke posisi, terus jentik buat hilang.");
+    try{
+      const still = await new Promise(r => stillC.toBlob(r, "image/jpeg", 0.92));
+      await idbSet("bg", { blob, secs, still, w: W, h: H });
+    }catch(e){ console.warn("Gagal nyimpen background", e); }
+  }catch(e){
+    console.error(e);
+    try { if (rec && rec.state !== "inactive") rec.stop(); } catch {}
+    setStatus("Gagal ngerekam ruangan kosong. Coba lagi.", true);
+  }finally{
+    countdown = 0; recLeft = 0; capturing = false; btnBg.disabled = false;
+  }
 }
 async function useBg(blob, secs){
   if (bgUrl) URL.revokeObjectURL(bgUrl);
@@ -360,6 +368,7 @@ async function loadSavedBg(){
   try{
     const saved = await idbGet("bg");
     if (!saved?.blob) return false;
+    if (saved.w && saved.h && Math.abs(saved.w / saved.h - W / H) > 0.02) return false;   // beda kamera/rasio: background lama nggak cocok
     if (saved.still){ const bmp = await createImageBitmap(saved.still); stillX.drawImage(bmp, 0, 0, W, H); }
     await useBg(saved.blob, saved.secs);
     return true;
@@ -398,6 +407,8 @@ function drawBg(c, w, h){
 
 /* ================= Person mask (live, every frame) ================= */
 let lastMaskVT = -1; maskFresh = true;
+const sharpen = v => { v = (v - 0.3) / 0.4; v = v < 0 ? 0 : v > 1 ? 1 : v; return v * v * (3 - 2 * v); };   // tegasin tepi mask, buang halo
+let mx0 = new Int32Array(MW), mx1 = new Int32Array(MW), mskW = 0;
 function readMask(){
   if (video.currentTime === lastMaskVT) return;
   lastMaskVT = video.currentTime;
@@ -411,12 +422,19 @@ function readMask(){
         const cm = ms.length > 1 ? ms[1] : ms[0];
         if (!cm) return;
         const a = cm.getAsFloat32Array(), w = cm.width, h = cm.height;
-        const inv = (a[2 * w + 2] + a[2 * w + w - 3]) / 2 > 0.5;
+        // cuma model 1-mask yang perlu ditebak kebalik atau nggak; kalau ada 2 mask, indeks 1 pasti orang
+        const inv = ms.length < 2 && (a[2 * w + 2] + a[2 * w + w - 3]) / 2 > 0.5;
+        if (mskW !== w){
+          mskW = w;
+          for (let x = 0; x < MW; x++){ mx0[x] = Math.min(w - 1, ((x + 0.25) / MW * w) | 0); mx1[x] = Math.min(w - 1, ((x + 0.75) / MW * w) | 0); }
+        }
         for (let y = 0; y < MH; y++){
-          const row = Math.min(h - 1, ((y + 0.5) / MH * h) | 0) * w;
+          const r0 = Math.min(h - 1, ((y + 0.25) / MH * h) | 0) * w, r1 = Math.min(h - 1, ((y + 0.75) / MH * h) | 0) * w;
           for (let x = 0; x < MW; x++){
-            let v = a[row + Math.min(w - 1, ((x + 0.5) / MW * w) | 0)];
+            // rata-rata 4 sampel per sel (anti-alias), bukan ambil 1 titik
+            let v = (a[r0 + mx0[x]] + a[r0 + mx1[x]] + a[r1 + mx0[x]] + a[r1 + mx1[x]]) * 0.25;
             if (inv) v = 1 - v;
+            v = sharpen(v);
             const j = y * MW + x;
             conf[j] = maskFresh ? v : conf[j] * 0.4 + v * 0.6;
           }
@@ -431,8 +449,10 @@ function readMask(){
   const b = smallBgX.getImageData(0, 0, MW, MH).data;
   for (let i = 0, p = 0; i < MN; i++, p += 4){
     const d = Math.abs(smallPix[p] - b[p]) + Math.abs(smallPix[p + 1] - b[p + 1]) + Math.abs(smallPix[p + 2] - b[p + 2]);
-    conf[i] = d > 60 ? 1 : d > 35 ? (d - 35) / 25 : 0;
+    const v = d > 60 ? 1 : d > 35 ? (d - 35) / 25 : 0;
+    conf[i] = maskFresh ? v : conf[i] * 0.4 + v * 0.6;
   }
+  maskFresh = false;
 }
 
 /* ================= Dissolve noise (prepared ahead, no hitch) ================= */
@@ -448,10 +468,17 @@ function prepareNoise(){
     }
   }
   for (let i = 0; i < MN; i++) f[i] += Math.random() * 0.14;
-  const idx = new Uint32Array(MN); for (let i = 0; i < MN; i++) idx[i] = i;
-  idx.sort((a, b) => f[a] - f[b]);
+  // rank-uniform lewat histogram (O(N)), jauh lebih ringan dari sort
+  let mn = Infinity, mxv = -Infinity;
+  for (let i = 0; i < MN; i++){ if (f[i] < mn) mn = f[i]; if (f[i] > mxv) mxv = f[i]; }
+  const B = 4096, sc = (B - 1) / ((mxv - mn) || 1), cnt = new Uint32Array(B), cdf = new Float64Array(B);
+  for (let i = 0; i < MN; i++) cnt[((f[i] - mn) * sc) | 0]++;
+  for (let b = 1; b < B; b++) cdf[b] = cdf[b - 1] + cnt[b - 1];
   const out = new Float32Array(MN);
-  for (let i = 0; i < MN; i++) out[idx[i]] = i / (MN - 1);
+  for (let i = 0; i < MN; i++){
+    const u = (f[i] - mn) * sc, b = u | 0;
+    out[i] = (cdf[b] + (u - b) * cnt[b]) / MN;
+  }
   noiseF = out;
 }
 
@@ -491,7 +518,7 @@ function drawDust(dt){
 
 /* ================= Vanish / appear ================= */
 function toggle(){
-  if (!running) return;
+  if (!running || capturing) return;
   if (!bgReady){ setStatus("Rekam ruangan kosong dulu (tombol atau tekan B).", true); return; }
   if (state === "visible"){ if (hands[0]) shockwave(hands[0].center.x, hands[0].center.y, 40 * SC, 30); releaseDrawing(); state = "dissolving"; animStart = performance.now(); lastMaskVT = -1; maskFresh = true; }
   else if (state === "hidden"){ clearHandState(); state = "reappearing"; animStart = performance.now(); lastMaskVT = -1; maskFresh = true; }
@@ -663,6 +690,7 @@ function finishCalib(){
 /* ================= Hand tracking (shared) ================= */
 let lastVT = -1, hands = [];
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const d3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
 // Joint angle in 3D (degrees). World landmarks keep this stable even when a finger points at the camera.
 const ang = (a, b, c) => {
   const ux = a.x - b.x, uy = a.y - b.y, uz = (a.z || 0) - (b.z || 0);
@@ -671,12 +699,11 @@ const ang = (a, b, c) => {
   return Math.acos(Math.max(-1, Math.min(1, (ux * vx + uy * vy + uz * vz) / n))) * 57.2958;
 };
 const ext = (w, mcp, pip, dip, tip) => ang(w[mcp], w[pip], w[dip]) > 150 && ang(w[pip], w[dip], w[tip]) > 135;
-const fingerHist = {};
+const fingerHist = {}, lmF = {};
 const pairMem = {};
 // "sword" = telunjuk + tengah dirapetin, "vee" = renggang (✌️). Ada zona tengah biar nggak kedip-kedip.
 function pairState(side, idx, mid, ring, pink, w){
   if (!(idx && mid && !ring && !pink)){ pairMem[side] = "none"; return "none"; }
-  const d3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
   const rr = d3(w[8], w[12]) / (d3(w[5], w[8]) || 1);
   const prev = pairMem[side] || "none";
   let st = "none";
@@ -695,7 +722,8 @@ function readHands(){
   const seen = new Set();
   hands = (res.landmarks || []).map((lm, i) => {
     const wl = res.worldLandmarks?.[i] || lm;
-    const side = res.handedness?.[i]?.[0]?.categoryName || ("h" + i);
+    let side = res.handedness?.[i]?.[0]?.categoryName || ("h" + i);
+    if (seen.has(side)) side += i;                 // dua tangan kebaca sama-sama "Left"? jangan sampai state-nya nyatu
     seen.add(side);
     const top = (res.gestures?.[i] || [])[0];
     const name = top?.categoryName || "", score = top?.score || 0;
@@ -711,18 +739,26 @@ function readHands(){
     else if (idx && mid && ring && pink) count = 4;
     else if (idx && !mid && !ring && pink) count = 5;      // 🤟
     const palmC = { x: (lm[0].x + lm[5].x + lm[17].x) / 3 * W, y: (lm[0].y + lm[5].y + lm[17].y) / 3 * H };
+    // titik jari yang udah di-1€ filter (tracking ~30fps → jitter hilang, tetep responsif pas gerak cepat)
+    const tt = performance.now() / 1000, fs = (lmF[side] ??= {});
+    const fp = k => {
+      const f = (fs[k] ??= [new OneEuro(1.5, 0.02), new OneEuro(1.5, 0.02)]);
+      return { x: f[0].f(lm[k].x * W, tt), y: f[1].f(lm[k].y * H, tt) };
+    };
     return {
-      lm, name, score, idx, mid, ring, pink, count, side, pair: pairState(side, idx, mid, ring, pink, wl),
+      lm, wl, name, score, idx, mid, ring, pink, count, side, pair: pairState(side, idx, mid, ring, pink, wl),
       open: (idx && mid && ring && pink) || (name === "Open_Palm" && score > 0.6),
       fist: (!idx && !mid && !ring && !pink) || (name === "Closed_Fist" && score > 0.6),
       thumbDown: name === "Thumb_Down" && score > 0.6,
-      size: dist(lm[0], lm[9]) * W,
-      center: { x: lm[9].x * W, y: lm[9].y * H },
+      size: Math.hypot((lm[0].x - lm[9].x) * W, (lm[0].y - lm[9].y) * H),   // piksel asli (x dan y beda skala)
+      center: fp(9),
       palm: palmC,
-      tip: { x: lm[8].x * W, y: lm[8].y * H }
+      tip: { x: lm[8].x * W, y: lm[8].y * H },
+      p4: fp(4), p8: fp(8), p12: fp(12)
     };
   });
   for (const k in fingerHist) if (!seen.has(k)){ delete fingerHist[k]; delete pairMem[k]; }
+  for (const k in lmF) if (!seen.has(k)) delete lmF[k];
   return true;
 }
 
@@ -744,6 +780,15 @@ class OneEuro {
 
 /* Glide a displayed value toward its tracked target every render frame (tracking ~30fps, screen 60fps). */
 const approach = (cur, target, dt, k = 22) => cur + (target - cur) * (1 - Math.exp(-dt * k));
+/* Titik yang dibaca tiap frame render: meluncur halus ke target (key = identitas titiknya). Lama nggak dipanggil = mulai ulang dari target. */
+const glides = new Map();
+function glide(key, p, dt, k = 24){
+  const now = performance.now(); let g = glides.get(key);
+  if (!g || now - g.t > 400) g = { x: p.x, y: p.y, t: now };
+  else { g.x = approach(g.x, p.x, dt, k); g.y = approach(g.y, p.y, dt, k); g.t = now; }
+  glides.set(key, g);
+  return g;
+}
 
 /* ---------- shared sparkle particles ---------- */
 const sparks = [];
@@ -834,11 +879,14 @@ function activation(now, fresh){
   } else { actCand = want; actT0 = now; actProg = 0; actHand = h; }
 }
 let ringGhost = null;
-function drawActivation(now){
-  if (actCand && actProg > 0.1 && actHand){
-    ringGhost = { c: { ...actHand.center }, prog: actProg, hue: actCand === -1 ? 40 : MODE_HUE[actCand], a: 1 };
+function drawActivation(now, dt){
+  // progress dihitung tiap frame render (bukan tiap frame tracking) biar ring muter mulus
+  const ap = actCand ? Math.min(1, (now - actT0) / 1000 / HOLD) : 0;
+  const cpos = actCand && actHand ? glide("act", actHand.center, dt, 18) : null;
+  if (actCand && ap > 0.1 && cpos){
+    ringGhost = { c: { x: cpos.x, y: cpos.y }, prog: ap, hue: actCand === -1 ? 40 : MODE_HUE[actCand], a: 1 };
   } else if (ringGhost){
-    ringGhost.a -= 0.08;
+    ringGhost.a -= dt * 5;
     if (ringGhost.a > 0){
       const g = ringGhost, r = 70 * SC;
       ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round"; ctx.lineWidth = 6 * SC;
@@ -847,25 +895,26 @@ function drawActivation(now){
       ctx.restore();
     } else ringGhost = null;
   }
-  if (actCand && actProg > 0.1 && actHand){
-    const c = actHand.center, hue = actCand === -1 ? 40 : MODE_HUE[actCand];
-    const pe = 1 - Math.pow(1 - Math.min(1, actProg), 2), r = 70 * SC * (0.85 + 0.15 * pe);
+  if (actCand && ap > 0.1 && cpos){
+    const c = cpos, hue = actCand === -1 ? 40 : MODE_HUE[actCand];
+    const pe = 1 - Math.pow(1 - ap, 2), r = 70 * SC * (0.85 + 0.15 * pe);
     ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round"; ctx.lineWidth = 6 * SC;
     ctx.strokeStyle = `hsla(${hue},100%,65%,0.25)`; ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2); ctx.stroke();
     ctx.strokeStyle = `hsla(${hue},100%,65%,0.95)`; ctx.beginPath();
-    ctx.arc(c.x, c.y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, actProg)); ctx.stroke();
+    ctx.arc(c.x, c.y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ap); ctx.stroke();
     ctx.restore();
-    label(actCand === -1 ? "Matiin mode" : `Mode ${actCand}`, c.x, c.y - r - 24 * SC, `hsl(${hue},100%,72%)`, actProg * 1.5);
+    label(actCand === -1 ? "Matiin mode" : `Mode ${actCand}`, c.x, c.y - r - 24 * SC, `hsl(${hue},100%,72%)`, Math.min(1, ap * 1.5));
   }
   if (modeFlash){
     const k = (now - modeFlash.t) / 1200;
     if (k >= 1) modeFlash = null;
     else {
+      const ek = 1 - Math.pow(1 - k, 3);
       ctx.save(); ctx.globalCompositeOperation = "lighter";
-      ctx.lineWidth = (10 * (1 - k) + 1) * SC; ctx.strokeStyle = `hsla(${modeFlash.hue},100%,65%,${1 - k})`;
-      ctx.beginPath(); ctx.arc(modeFlash.x, modeFlash.y, (70 + k * 160) * SC, 0, Math.PI * 2); ctx.stroke();
+      ctx.lineWidth = (10 * (1 - ek) + 1) * SC; ctx.strokeStyle = `hsla(${modeFlash.hue},100%,65%,${(1 - k) * (1 - k)})`;
+      ctx.beginPath(); ctx.arc(modeFlash.x, modeFlash.y, (70 + ek * 160) * SC, 0, Math.PI * 2); ctx.stroke();
       ctx.restore();
-      label(modeFlash.text, modeFlash.x, modeFlash.y - (100 + k * 30) * SC, `hsl(${modeFlash.hue},100%,75%)`, 1 - k);
+      label(modeFlash.text, modeFlash.x, modeFlash.y - (100 + ek * 30) * SC, `hsl(${modeFlash.hue},100%,75%)`, Math.min(1, (1 - k) * 2));
     }
   }
 }
@@ -996,7 +1045,7 @@ function mode3(now, dt, fresh){
       const target = { x: h.palm.x, y: h.palm.y - lift * 0.35 };
       if (!orb){ ox3.reset(); oy3.reset(); orb = { x: target.x, y: target.y, tx: target.x, ty: target.y, charge: 0, r: 0, spin: 0 }; }
       orb.tx = ox3.f(target.x, t); orb.ty = oy3.f(target.y, t);
-      orb.maxR = h.size * 0.62;
+      orb.mr = h.size * 0.62;
       orb.held = now;
       fist3 = 0;
     } else if (h && h.fist && orb){
@@ -1005,6 +1054,7 @@ function mode3(now, dt, fresh){
     }
   }
   if (!orb) return;
+  orb.maxR = orb.maxR == null ? (orb.mr || 60 * SC) : approach(orb.maxR, orb.mr || orb.maxR, dt, 10);
   orb.x = approach(orb.x, orb.tx, dt, 20); orb.y = approach(orb.y, orb.ty, dt, 20);
   if (now - (orb.held || 0) <= 260) orb.charge = Math.min(1, orb.charge + dt * 0.9);
   else orb.charge -= dt * 1.4;   // hand gone: orb fizzles out
@@ -1184,7 +1234,7 @@ function mode4(now, dt, fresh){
       const two = [...hands].sort((a, b) => a.center.x - b.center.x).slice(0, 2);
       for (const h of two){
         // pinch telunjuk + jempol, pakai hysteresis biar nggak kedip-kedip
-        const r = dist(h.lm[4], h.lm[8]) / (dist(h.lm[0], h.lm[9]) || 1);
+        const r = d3(h.wl[4], h.wl[8]) / (d3(h.wl[0], h.wl[9]) || 1);
         const was = !!pinchState[h.side];
         const pinch = was ? r < 0.42 : r < 0.24;
         if (pinch && !was){
@@ -1296,7 +1346,7 @@ let sealTrace = [], seal = null;
 const swordF = {};
 function resetSeal(){ sealTrace = []; seal = null; for (const k in swordF) delete swordF[k]; }
 function isSword(h){ return h.pair === "sword"; }
-function swordTip(h){ return { x: (h.lm[8].x + h.lm[12].x) / 2 * W, y: (h.lm[8].y + h.lm[12].y) / 2 * H }; }
+function swordTip(h){ return { x: (h.p8.x + h.p12.x) / 2, y: (h.p8.y + h.p12.y) / 2 }; }
 
 function drawSeal(s, now){
   const R = s.r * s.scale, build = s.build, a = s.alpha;
@@ -1366,7 +1416,7 @@ function blowSeal(){
 }
 function lightning2(now, dt, fresh){
   if (fresh){
-    victory = hands.filter(h => h.pair === "vee").map(h => [h.lm[8], h.lm[12]].map(p => ({ x: p.x * W, y: p.y * H })));
+    victory = hands.filter(h => h.pair === "vee").map(h => [h.p8, h.p12].map(p => ({ x: p.x, y: p.y })));
     if (!victory.length && hands.some(isSword)){ glow = 0; vtipsD = []; }
   }
   if (victory.length){
@@ -1408,8 +1458,8 @@ function mode2(now, dt, fresh){
     }
     if (!seal || seal.state === "fade"){
       swords.forEach((h, i) => {
-        const p = swordTip(h), last = [...sealTrace].reverse().find(q => q.id === (h.side === "Left" ? 0 : 1));
-        if (!last || dist(last, p) > 3 * SC) sealTrace.push({ ...p, t: now, id: h.side === "Left" ? 0 : 1 });
+        const p = swordTip(h), id = i % 2, last = [...sealTrace].reverse().find(q => q.id === id);
+        if (!last || dist(last, p) > 3 * SC) sealTrace.push({ ...p, t: now, id });
       });
       const c = detectCircle(sealTrace);
       if (c){ seal = { ...c, build: 0, scale: 1, alpha: 1, state: "build", born: now, armed: false }; sealTrace = []; }
@@ -1422,7 +1472,7 @@ function mode2(now, dt, fresh){
   pruneTrace(sealTrace, now);
   drawTrace(sealTrace, now, 315, 190);
   for (const h of hands) if (swordF[h.side] >= 2 && live){
-    ctx.save(); ctx.globalCompositeOperation = "lighter"; glowDot(swordTip(h), 26 * SC, "255,79,216", 0.9); ctx.restore();
+    ctx.save(); ctx.globalCompositeOperation = "lighter"; glowDot(glide("sw" + h.side, swordTip(h), dt, 26), 26 * SC, "255,79,216", 0.9); ctx.restore();
   }
   if (!seal) return;
   if (!live && seal.state !== "collapse") seal.state = "fade";
@@ -1443,7 +1493,7 @@ function mode2(now, dt, fresh){
    Kepal tangan -> lubang hitam runtuh & meledak. */
 const SPIN_TURNS = 2.2;
 let hole = null, spin = null, gravityWell = null;
-const LENS = 200;
+const LENS = 256;
 const lensC = document.createElement("canvas"); lensC.width = lensC.height = LENS;
 const lensX = lensC.getContext("2d", { willReadFrequently: true });
 const lensR = new Float32Array(LENS * LENS), lensT = new Float32Array(LENS * LENS);
@@ -1570,8 +1620,8 @@ function drawChargeRing(now){
   return ch;
 }
 /* Glow + tiny orbiting motes on the two raised fingers. */
-function fingerAura(h, now){
-  const a = { x: h.lm[8].x * W, y: h.lm[8].y * H }, b = { x: h.lm[12].x * W, y: h.lm[12].y * H };
+function fingerAura(h, now, dt){
+  const a = glide("fa" + h.side, h.p8, dt, 26), b = glide("fb" + h.side, h.p12, dt, 26);
   const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
   ctx.save(); ctx.globalCompositeOperation = "lighter";
   glowDot(a, 22 * SC, "190,120,255", 0.9); glowDot(b, 22 * SC, "92,225,255", 0.9);
@@ -1581,7 +1631,7 @@ function fingerAura(h, now){
   }
   ctx.restore();
   if (Math.random() < 0.5) addSpark(m.x, m.y, (Math.random() - 0.5) * 60 * SC, (Math.random() - 0.5) * 60 * SC, 0.4, 2 * SC, Math.random() < 0.5 ? 275 : 195);
-  return m;
+  return { x: (h.p8.x + h.p12.x) / 2, y: (h.p8.y + h.p12.y) / 2 };   // titik tracking buat hitung putaran (bukan titik tampilan)
 }
 function collapseHole(h){
   shockwave(h.x, h.y, h.r * 0.3, 40);
@@ -1596,7 +1646,7 @@ function mode5(now, dt, fresh){
   gravityWell = null;
   const two = live ? hands.find(x => x.count === 2) : null;
   let tipMid = null;
-  if (two && !hole) tipMid = fingerAura(two, now);
+  if (two && !hole) tipMid = fingerAura(two, now, dt);
   if (fresh && live){
     if (!hole){
       if (two && tipMid) spinUpdate(tipMid, now);
@@ -1639,13 +1689,15 @@ function handEffectsIdle(now, dt){
 
   drawBursts(dt);
   drawWaves(dt);
-  drawActivation(now);
+  drawActivation(now, dt);
   drawSparks(dt);
 }
 /* Forget everything about the hands so nothing old pops back when you reappear. */
 function clearHandState(){
   hands = []; victory = []; vtips = []; glow = 0;
   for (const k in fingerHist) delete fingerHist[k];
+  for (const k in lmF) delete lmF[k];
+  glides.clear();
   actCand = 0; actProg = 0; actHand = null; modeFlash = null;
   strokes = []; curStroke = null; drawing = false; tip = null; tipD = null; tipVis = 0; vtipsD = []; fistFrames = 0;
   resetOrb(); resetPortal(); resetSeal(); resetRift();
@@ -1665,7 +1717,7 @@ function handEffects(now, dt){
 
   drawBursts(dt);
   drawWaves(dt);
-  drawActivation(now);
+  drawActivation(now, dt);
   drawSparks(dt);
 }
 
@@ -1722,7 +1774,10 @@ if (window.obsstudio || new URLSearchParams(location.search).has("obs")){
 
 /* ================= Keys ================= */
 addEventListener("keydown", e => {
-  if (e.code === "Space"){ e.preventDefault(); toggle(); }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;                       // jangan bajak Ctrl+F, Ctrl+C, dll.
+  if (e.target.closest?.("input[type=range], select, textarea")) { if (e.code !== "Space" && e.key !== "Escape") return; }
+  if (e.code === "Space"){ e.preventDefault(); if (!e.repeat) toggle(); }
+  else if (e.repeat) return;
   else if (e.key === "Escape") panicReset();
   else if (e.key === "b" || e.key === "B") captureBg();
   else if (e.key === "k" || e.key === "K") startCalib();
@@ -1735,6 +1790,9 @@ addEventListener("keydown", e => {
     if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {});
   }
 });
+/* Spasi pas fokus di tombol bisa ke-klik juga pas dilepas → toggle dobel. Tombol dilepas fokusnya habis diklik. */
+addEventListener("keyup", e => { if (e.code === "Space") e.preventDefault(); });
+document.querySelectorAll("button").forEach(b => b.addEventListener("click", () => b.blur()));
 </script>
 </body>
 </html>
