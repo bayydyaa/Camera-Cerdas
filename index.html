@@ -1,0 +1,924 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jentik Hilang ☝️✌️</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --panel:rgba(37,24,56,.95); --line:#433063; --text:#f3eefc; --muted:#b4a6cc;
+    --pink:#ff4fd8; --cyan:#5ce1ff; --amber:#ffb547; --ok:#7dffb0;
+    --font:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#000;color:var(--text);font-family:var(--font);overflow:hidden}
+  #stage{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000;display:block}
+  .hidden-media{position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
+  #hint{position:fixed;inset:0;display:grid;place-items:center;text-align:center;color:var(--muted);font-size:1.1rem;padding:2rem;pointer-events:none}
+  #panel{position:fixed;left:16px;top:16px;width:310px;max-height:calc(100% - 32px);overflow:auto;
+    background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;backdrop-filter:blur(8px)}
+  #panel h1{margin:0 0 4px;font-size:1.55rem;font-weight:800;letter-spacing:-.02em}
+  #status{margin:0 0 14px;color:var(--muted);font-size:.9rem;line-height:1.4;min-height:2.5em}
+  #status.warn{color:var(--amber)}
+  h2{font-size:.95rem;margin:0 0 10px;font-weight:600}
+  button{width:100%;font:inherit;font-weight:600;font-size:.93rem;color:var(--text);background:#33234d;
+    border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:0 0 8px;cursor:pointer;text-align:left}
+  button:hover:not(:disabled){background:#3f2b5e}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.primary{background:linear-gradient(100deg,var(--pink),#9b5cff 55%,var(--cyan));color:#1a0d24;border:0}
+  button:focus-visible,input:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  .note{margin:-2px 0 12px;color:var(--muted);font-size:.8rem;line-height:1.4}
+  .group{border-top:1px solid var(--line);margin-top:8px;padding-top:14px}
+  label{display:flex;justify-content:space-between;align-items:center;font-size:.86rem;margin:0 0 6px}
+  output{color:var(--cyan);font-weight:600}
+  input[type=range]{width:100%;margin:0 0 12px;accent-color:var(--pink)}
+  .meter{position:relative;height:10px;background:#120b1e;border-radius:6px;margin:0 0 12px;overflow:hidden}
+  .meter .fill{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--pink))}
+  .meter .mark{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--amber)}
+  #detect{font-size:.82rem;min-height:1.3em;margin:0 0 12px;color:var(--muted)}
+  #detect.ok{color:var(--ok)} #detect.no{color:var(--amber)}
+  .check{justify-content:flex-start;gap:8px;cursor:pointer}
+  .check input{accent-color:var(--pink);width:16px;height:16px}
+  .keys{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;margin:12px 0 0;font-size:.8rem;color:var(--muted)}
+  .keys dt{font-weight:600;color:var(--text)} .keys dd{margin:0}
+  body.clean #panel{display:none} body.clean{cursor:none}
+  #stage.mirror{transform:scaleX(-1)}
+  .modes{display:grid;gap:6px;margin:0 0 12px}
+  .modes label{justify-content:flex-start;gap:8px;margin:0;padding:8px 10px;border:1px solid var(--line);border-radius:10px;cursor:pointer}
+  .modes label:has(input:checked){border-color:var(--pink);background:#3a2356}
+  .modes input{accent-color:var(--pink)}
+  @media (max-width:520px){#panel{width:calc(100% - 32px)}}
+</style>
+</head>
+<body>
+<video id="cam" class="hidden-media" playsinline muted></video>
+<canvas id="stage" width="1280" height="720"></canvas>
+<div id="hint">Klik “Nyalain kamera & mic” buat mulai.</div>
+
+<aside id="panel">
+  <h1>Jentik Hilang ✌️</h1>
+  <p id="status">Kamera belum nyala.</p>
+
+  <button id="btnStart" class="primary">Nyalain kamera & mic</button>
+  <button id="btnBg" disabled>Rekam ruangan kosong (5 detik)</button>
+  <p class="note">Klik, keluar dari frame, tunggu hitungan mundur, diem sampai rekaman selesai. Laptop jangan digeser setelahnya.</p>
+  <button id="btnCalib" disabled>Kalibrasi jentik (3x jentik)</button>
+  <button id="btnToggle" disabled>Tes hilang / muncul</button>
+  <button id="btnLink">Salin link buat OBS</button>
+
+  <div class="group">
+    <h2>Deteksi jentik</h2>
+    <label>Volume mic <output id="lvl">0%</output></label>
+    <div class="meter"><div class="fill" id="fillVol"></div><div class="mark" id="markVol"></div></div>
+    <label for="vol">Ambang volume <output id="volOut">25%</output></label>
+    <input type="range" id="vol" min="2" max="90" value="25">
+
+    <label>Ketajaman suara <output id="hfLvl">–</output></label>
+    <div class="meter"><div class="fill" id="fillHf"></div><div class="mark" id="markHf"></div></div>
+    <label for="hf">Filter suara lain <output id="hfOut">45%</output></label>
+    <input type="range" id="hf" min="10" max="85" value="45">
+
+    <label for="cool">Jeda antar jentik <output id="coolOut">1.5 dtk</output></label>
+    <input type="range" id="cool" min="0.8" max="4" step="0.1" value="1.5">
+
+    <p id="detect">Belum ada suara yang dicek.</p>
+    <label class="check"><input type="checkbox" id="snapOn" checked> Jentik jari aktif</label>
+  </div>
+
+  <div class="group">
+    <h2>Animasi</h2>
+    <label for="dur">Durasi buyar <output id="durOut">1.8 dtk</output></label>
+    <input type="range" id="dur" min="1" max="3.5" step="0.1" value="1.8">
+  </div>
+
+  <div class="group">
+    <h2>Mode efek tangan</h2>
+    <div class="modes">
+      <label><input type="radio" name="mode" value="0" checked> Mati</label>
+      <label><input type="radio" name="mode" value="1"> Mode 1 ☝️ Gambar di udara</label>
+      <label><input type="radio" name="mode" value="2"> Mode 2 ✌️ Petir di jari</label>
+    </div>
+    <p class="note" id="modeNote"></p>
+    <label class="check"><input type="checkbox" id="mirror" checked> Cerminin layar (biar gambar & tulisan kebaca)</label>
+  </div>
+
+  <dl class="keys">
+    <dt>Spasi</dt><dd>hilang / muncul manual</dd>
+    <dt>B</dt><dd>rekam ruangan kosong</dd>
+    <dt>K</dt><dd>kalibrasi jentik</dd>
+    <dt>☝️ tahan</dt><dd>aktifin Mode 1</dd>
+    <dt>✌️ tahan</dt><dd>aktifin Mode 2</dd>
+    <dt>🖐️ tahan</dt><dd>matiin mode</dd>
+    <dt>0 / 1 / 2</dt><dd>ganti mode lewat keyboard</dd>
+    <dt>C</dt><dd>hapus gambar</dd>
+    <dt>H</dt><dd>sembunyiin / munculin panel</dd>
+    <dt>F</dt><dd>layar penuh</dd>
+  </dl>
+</aside>
+
+<script type="module">
+const MP_VER = "0.10.14";
+const MP_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
+const SEG_URL = "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite";
+const GEST_URL = "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task";
+
+const $ = s => document.querySelector(s);
+const video = $("#cam"), stage = $("#stage"), ctx = stage.getContext("2d");
+const statusEl = $("#status"), detectEl = $("#detect");
+const btnStart = $("#btnStart"), btnBg = $("#btnBg"), btnCalib = $("#btnCalib"), btnToggle = $("#btnToggle");
+const volEl = $("#vol"), hfEl = $("#hf"), cool = $("#cool"), durEl = $("#dur"), snapOn = $("#snapOn"), mirrorEl = $("#mirror");
+const MODE_NOTES = {
+  0: "Belum ada mode aktif. Tahan ☝️ 1 jari buat Mode 1, atau ✌️ 2 jari buat Mode 2.",
+  1: "☝️ Telunjuk buat gambar, kepal tangan buat ngebuyarin. Tahan 🖐️ buat matiin mode.",
+  2: "✌️ ke kamera buat petir. Tahan 🖐️ buat matiin mode."
+};
+let mode = 0, modeFlash = null;
+function setMode(m, fromGesture = false){
+  if (mode === 1 && m !== 1 && strokes.length) releaseDrawing();
+  mode = m;
+  document.querySelectorAll('input[name=mode]').forEach(r => r.checked = +r.value === m);
+  $("#modeNote").textContent = MODE_NOTES[m];
+  strokes = []; curStroke = null; victory = []; glow = 0; tipVis = 0; drawing = false;
+  blockDrawUntil = performance.now() + 600;
+  if (fromGesture && actHand){
+    const c = actHand.center, hue = m === 2 ? 190 : m === 1 ? 310 : 45;
+    modeFlash = { x: c.x, y: c.y, t: performance.now(), text: m ? `Mode ${m} aktif` : "Mode mati", hue };
+    for (let i = 0; i < 40; i++){
+      const a = Math.random() * Math.PI * 2, sp = (150 + Math.random() * 250) * SC;
+      addSpark(c.x, c.y, Math.cos(a) * sp, Math.sin(a) * sp, 0.6 + Math.random() * 0.5, (3 + Math.random() * 4) * SC, hue);
+    }
+  }
+}
+document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener("change", () => setMode(+r.value)));
+const applyMirror = () => stage.classList.toggle("mirror", mirrorEl.checked);
+mirrorEl.addEventListener("change", applyMirror); applyMirror();
+
+const bind = (el, out, fmt) => { const f = () => $(out).textContent = fmt(+el.value); el.addEventListener("input", f); f(); };
+bind(volEl, "#volOut", v => v + "%");
+bind(hfEl, "#hfOut", v => v + "%");
+bind(cool, "#coolOut", v => v.toFixed(1) + " dtk");
+bind(durEl, "#durOut", v => v.toFixed(1) + " dtk");
+const SETTINGS = ["vol", "hf", "cool", "dur"];
+try{
+  const saved = JSON.parse(localStorage.getItem("jentik-settings") || "{}");
+  SETTINGS.forEach(id => { if (saved[id] != null){ $("#" + id).value = saved[id]; $("#" + id).dispatchEvent(new Event("input")); } });
+  if (saved.mirror != null) $("#mirror").checked = saved.mirror;
+  if (saved.snapOn != null) $("#snapOn").checked = saved.snapOn;
+}catch{}
+function saveSettings(){
+  try{
+    const o = {}; SETTINGS.forEach(id => o[id] = $("#" + id).value);
+    o.mirror = $("#mirror").checked; o.snapOn = $("#snapOn").checked;
+    localStorage.setItem("jentik-settings", JSON.stringify(o));
+  }catch{}
+}
+[...SETTINGS, "mirror", "snapOn"].forEach(id => $("#" + id).addEventListener("change", saveSettings));
+applyMirror();
+
+function setStatus(t, warn = false){ statusEl.textContent = t; statusEl.classList.toggle("warn", warn); }
+let lastMsg = 0;
+function setDetect(t, kind, force = false){
+  const now = performance.now();
+  if (!force && now - lastMsg < 600) return;
+  lastMsg = now; detectEl.textContent = t; detectEl.className = kind || "";
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const mk = () => { const c = document.createElement("canvas"); return [c, c.getContext("2d", { willReadFrequently: true })]; };
+
+let W = 1280, H = 720, SC = 1;
+const MW = 320; let MH = 180, MN = MW * MH;
+const [personC, personX] = mk(), [maskC, maskX] = mk(), [smallC, smallX] = mk(), [smallBgC, smallBgX] = mk(), [stillC, stillX] = mk();
+let maskImg = null, conf = null, smallPix = null, noiseF = null, maskFresh = true;
+
+let stream = null, running = false, bgReady = false;
+let state = "visible", animStart = 0, countdown = 0, recLeft = 0;
+let segmenter = null, gesture = null;
+
+/* ================= Start ================= */
+btnStart.onclick = async () => {
+  btnStart.disabled = true;
+  try{
+    setStatus("Minta izin kamera & mic…");
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    video.srcObject = stream;
+    await video.play();
+    W = video.videoWidth || 1280; H = video.videoHeight || 720; SC = W / 1280;
+    MH = Math.round(MW * H / W); MN = MW * MH;
+    for (const c of [stage, personC, stillC]) { c.width = W; c.height = H; }
+    for (const c of [maskC, smallC, smallBgC]) { c.width = MW; c.height = MH; }
+    maskImg = maskX.createImageData(MW, MH); maskImg.data.fill(255);
+    conf = new Float32Array(MN);
+    prepareNoise();
+    setupAudio();
+
+    running = true;
+    $("#hint").style.display = "none";
+    for (const b of [btnBg, btnCalib, btnToggle]) b.disabled = false;
+    btnStart.textContent = "Kamera & mic nyala";
+    setStatus("Lagi muat AI pemisah badan & deteksi tangan…");
+    loadSavedBg().then(ok => { if (ok) setDetect("Background tersimpan dipakai. Laptop kegeser? Rekam ulang (B).", "", true); });
+    loadAI();
+  }catch(e){
+    console.error(e);
+    btnStart.disabled = false;
+    setStatus("Kamera/mic nggak bisa dibuka. Tutup OBS atau aplikasi lain yang lagi pakai webcam, terus izinkan akses di browser.", true);
+  }
+};
+
+async function importVision(){
+  try { return await import(`${MP_BASE}/vision_bundle.mjs`); }
+  catch { return await import(`${MP_BASE}/+esm`); }
+}
+async function loadAI(){
+  try{
+    const { FilesetResolver, ImageSegmenter, GestureRecognizer } = await importVision();
+    const files = await FilesetResolver.forVisionTasks(`${MP_BASE}/wasm`);
+    const make = async (Cls, opts) => {
+      try { return await Cls.createFromOptions(files, { ...opts, baseOptions: { ...opts.baseOptions, delegate: "GPU" } }); }
+      catch { return await Cls.createFromOptions(files, { ...opts, baseOptions: { ...opts.baseOptions, delegate: "CPU" } }); }
+    };
+    segmenter = await make(ImageSegmenter, { baseOptions: { modelAssetPath: SEG_URL }, runningMode: "VIDEO", outputConfidenceMasks: true, outputCategoryMask: false });
+    gesture = await make(GestureRecognizer, { baseOptions: { modelAssetPath: GEST_URL }, runningMode: "VIDEO", numHands: 2 });
+    lastMaskVT = -1; maskFresh = true; readMask();
+    setStatus(bgReady ? "Siap! Jentik buat hilang." : "AI siap. Sekarang rekam ruangan kosong dulu.");
+  }catch(e){
+    console.error(e);
+    setStatus("AI gagal dimuat (cek internet). Trik tetap jalan pakai mode cadangan, efek ✌️ mati.", true);
+  }
+}
+
+/* ================= Looping background video ================= */
+const bgVids = [0, 1].map(() => { const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.className = "hidden-media"; document.body.appendChild(v); return v; });
+let bgUrl = null, bgDur = 5, curV = null, nxtV = null, fadeStart = 0, fadeA = 0;
+
+btnBg.onclick = captureBg;
+async function captureBg(){
+  if (!running || countdown || recLeft || state !== "visible") return;
+  btnBg.disabled = true;
+  for (let c = 5; c >= 1; c--){ countdown = c; setStatus(`Keluar dari frame… ${c}`); await sleep(1000); }
+  countdown = 0;
+
+  const mime = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].find(m => MediaRecorder.isTypeSupported(m));
+  const rec = new MediaRecorder(new MediaStream(stream.getVideoTracks()), { mimeType: mime, videoBitsPerSecond: 8e6 });
+  const chunks = [];
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  const stopped = new Promise(r => rec.onstop = r);
+  const t0 = performance.now();
+  rec.start();
+  for (let s = 5; s >= 1; s--){
+    recLeft = s; setStatus(`Ngerekam ruangan kosong… ${s}`);
+    if (s === 3) stillX.drawImage(video, 0, 0, W, H);
+    await sleep(1000);
+  }
+  rec.stop(); await stopped; recLeft = 0;
+  const secs = (performance.now() - t0) / 1000;
+
+  const blob = new Blob(chunks, { type: mime });
+  await useBg(blob, secs);
+  btnBg.disabled = false;
+  setStatus("Ruangan kosong kerekam. Balik ke posisi, terus jentik buat hilang.");
+  try{
+    const still = await new Promise(r => stillC.toBlob(r, "image/jpeg", 0.92));
+    await idbSet("bg", { blob, secs, still });
+  }catch(e){ console.warn("Gagal nyimpen background", e); }
+}
+async function useBg(blob, secs){
+  if (bgUrl) URL.revokeObjectURL(bgUrl);
+  bgUrl = URL.createObjectURL(blob);
+  bgDur = Math.max(1.5, secs - 0.2);
+  bgVids.forEach(v => { v.pause(); v.removeAttribute("src"); v.load(); });
+  curV = bgVids[0]; nxtV = null; fadeStart = 0; fadeA = 0;
+  curV.src = bgUrl; await curV.play().catch(() => {});
+  bgReady = true;
+  btnBg.textContent = "Rekam ulang ruangan kosong";
+}
+async function loadSavedBg(){
+  try{
+    const saved = await idbGet("bg");
+    if (!saved?.blob) return false;
+    if (saved.still){ const bmp = await createImageBitmap(saved.still); stillX.drawImage(bmp, 0, 0, W, H); }
+    await useBg(saved.blob, saved.secs);
+    return true;
+  }catch(e){ console.warn(e); return false; }
+}
+const idbOpen = () => new Promise((res, rej) => {
+  const r = indexedDB.open("jentik-hilang", 1);
+  r.onupgradeneeded = () => r.result.createObjectStore("kv");
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+});
+async function idbGet(k){
+  const db = await idbOpen();
+  return new Promise((res, rej) => { const q = db.transaction("kv").objectStore("kv").get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+}
+async function idbSet(k, v){
+  const db = await idbOpen();
+  return new Promise((res, rej) => { const t = db.transaction("kv", "readwrite"); t.objectStore("kv").put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); });
+}
+
+function bgTick(now){
+  if (!curV) return;
+  if (!nxtV && (curV.currentTime >= bgDur - 1 || curV.ended)){
+    nxtV = curV === bgVids[0] ? bgVids[1] : bgVids[0];
+    nxtV.src = bgUrl; nxtV.play().catch(() => {}); fadeStart = 0;
+  }
+  if (nxtV){
+    if (!fadeStart && nxtV.readyState >= 2 && nxtV.currentTime > 0 && (curV.currentTime >= bgDur - 0.7 || curV.ended)) fadeStart = now;
+    fadeA = fadeStart ? Math.min(1, (now - fadeStart) / 600) : 0;
+    if (fadeA >= 1){ curV.pause(); curV = nxtV; nxtV = null; fadeA = 0; fadeStart = 0; }
+  }
+}
+function drawBg(c, w, h){
+  if (curV && curV.readyState >= 2) c.drawImage(curV, 0, 0, w, h); else c.drawImage(stillC, 0, 0, w, h);
+  if (nxtV && fadeA > 0 && nxtV.readyState >= 2){ const base = c.globalAlpha; c.globalAlpha = base * fadeA; c.drawImage(nxtV, 0, 0, w, h); c.globalAlpha = base; }
+}
+
+/* ================= Person mask (live, every frame) ================= */
+let lastMaskVT = -1; maskFresh = true;
+function readMask(){
+  if (video.currentTime === lastMaskVT) return;
+  lastMaskVT = video.currentTime;
+  smallX.drawImage(video, 0, 0, MW, MH);
+  smallPix = smallX.getImageData(0, 0, MW, MH).data;
+  if (segmenter){
+    let ok = false;
+    try{
+      segmenter.segmentForVideo(video, performance.now(), res => {
+        const ms = res.confidenceMasks || [];
+        const cm = ms.length > 1 ? ms[1] : ms[0];
+        if (!cm) return;
+        const a = cm.getAsFloat32Array(), w = cm.width, h = cm.height;
+        const inv = (a[2 * w + 2] + a[2 * w + w - 3]) / 2 > 0.5;
+        for (let y = 0; y < MH; y++){
+          const row = Math.min(h - 1, ((y + 0.5) / MH * h) | 0) * w;
+          for (let x = 0; x < MW; x++){
+            let v = a[row + Math.min(w - 1, ((x + 0.5) / MW * w) | 0)];
+            if (inv) v = 1 - v;
+            const j = y * MW + x;
+            conf[j] = maskFresh ? v : conf[j] * 0.4 + v * 0.6;
+          }
+        }
+        maskFresh = false;
+        ok = true;
+      });
+    }catch(e){ console.warn(e); }
+    if (ok) return;
+  }
+  drawBg(smallBgX, MW, MH);
+  const b = smallBgX.getImageData(0, 0, MW, MH).data;
+  for (let i = 0, p = 0; i < MN; i++, p += 4){
+    const d = Math.abs(smallPix[p] - b[p]) + Math.abs(smallPix[p + 1] - b[p + 1]) + Math.abs(smallPix[p + 2] - b[p + 2]);
+    conf[i] = d > 60 ? 1 : d > 35 ? (d - 35) / 25 : 0;
+  }
+}
+
+/* ================= Dissolve noise (prepared ahead, no hitch) ================= */
+function prepareNoise(){
+  const f = new Float32Array(MN);
+  for (const [gx, amp] of [[7, 0.6], [19, 0.28]]){
+    const gy = Math.max(2, Math.round(gx * MH / MW)), r = gx + 1;
+    const g = new Float32Array((gx + 1) * (gy + 1)).map(() => Math.random());
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++){
+      const fx = x / MW * gx, fy = y / MH * gy, ix = fx | 0, iy = fy | 0, tx = fx - ix, ty = fy - iy;
+      const v = (g[iy * r + ix] * (1 - tx) + g[iy * r + ix + 1] * tx) * (1 - ty) + (g[(iy + 1) * r + ix] * (1 - tx) + g[(iy + 1) * r + ix + 1] * tx) * ty;
+      f[y * MW + x] += v * amp;
+    }
+  }
+  for (let i = 0; i < MN; i++) f[i] += Math.random() * 0.14;
+  const idx = new Uint32Array(MN); for (let i = 0; i < MN; i++) idx[i] = i;
+  idx.sort((a, b) => f[a] - f[b]);
+  const out = new Float32Array(MN);
+  for (let i = 0; i < MN; i++) out[idx[i]] = i / (MN - 1);
+  noiseF = out;
+}
+
+/* ================= Dust particles ================= */
+const dust = [];
+function spawnAt(i, outward){
+  const gx = i % MW, gy = (i / MW) | 0, sx = W / MW, sy = H / MH, p = i * 4;
+  const life = 0.6 + Math.random() * 0.8;
+  dust.push({
+    tx: (gx + Math.random()) * sx, ty: (gy + Math.random()) * sy,
+    vx: (50 + Math.random() * 190) * SC, vy: -(20 + Math.random() * 130) * SC,
+    life, max: life, r: smallPix[p], g: smallPix[p + 1], b: smallPix[p + 2],
+    s: (1.5 + Math.random() * 2.5) * SC, out: outward, sd: Math.random() * 6.28
+  });
+}
+function drawDust(dt){
+  if (dust.length > 4500) dust.splice(0, dust.length - 4500);
+  for (let i = dust.length - 1; i >= 0; i--){
+    const d = dust[i];
+    d.life -= dt;
+    if (d.life <= 0){ dust.splice(i, 1); continue; }
+    const k = 1 - d.life / d.max;                 // 0 → 1 over lifetime
+    const t = d.out ? d.max - d.life : d.life;   // travel time from the person's edge
+    const sp = t * (0.6 + t * 0.6), wob = d.out ? k : 1 - k;
+    const x = d.tx + d.vx * sp + Math.sin(d.sd + t * 6) * 6 * wob;
+    const y = d.ty + d.vy * sp + Math.cos(d.sd + t * 5) * 4 * wob;
+    const a = (d.out ? 1 - k : k) * 0.95, m = (d.out ? k : 1 - k) * 0.6;
+    ctx.fillStyle = `rgba(${(d.r * (1 - m) + 125 * m) | 0},${(d.g * (1 - m) + 110 * m) | 0},${(d.b * (1 - m) + 95 * m) | 0},${a.toFixed(3)})`;
+    ctx.fillRect(x, y, d.s, d.s);
+  }
+}
+
+/* ================= Vanish / appear ================= */
+function toggle(){
+  if (!running) return;
+  if (!bgReady){ setStatus("Rekam ruangan kosong dulu (tombol atau tekan B).", true); return; }
+  if (state === "visible"){ releaseDrawing(); state = "dissolving"; animStart = performance.now(); lastMaskVT = -1; maskFresh = true; }
+  else if (state === "hidden"){ state = "reappearing"; animStart = performance.now(); lastMaskVT = -1; maskFresh = true; }
+}
+btnToggle.onclick = toggle;
+
+$("#btnLink").onclick = async () => {
+  if (location.protocol === "file:"){
+    setStatus("Link cuma ada kalau web-nya udah di-upload (misal GitHub Pages). Kalau masih file lokal, pakai “Local file” di OBS.", true);
+    return;
+  }
+  const url = location.origin + location.pathname + "?obs";
+  try { await navigator.clipboard.writeText(url); setStatus("Link OBS disalin: " + url); }
+  catch { prompt("Salin link ini buat OBS:", url); }
+};
+
+function transitionFrame(now){
+  const D = +durEl.value, k = Math.min(1, (now - animStart) / 1000 / D);
+  const ease = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+  const p = state === "dissolving" ? ease : 1 - ease;
+  readMask();
+
+  const SOFT = 0.08, th = p * (1 + SOFT) - SOFT, md = maskImg.data, outward = state === "dissolving";
+  let budget = 420;
+  for (let i = 0; i < MN; i++){
+    const c = conf[i];
+    let a = 0;
+    if (c > 0.02){
+      const t = (noiseF[i] - th) / SOFT;
+      const s = t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+      a = c * s;
+      if (c > 0.5 && t > -0.6 && t < 0.9 && budget > 0 && Math.random() < 0.22){ budget--; spawnAt(i, outward); }
+    }
+    md[i * 4 + 3] = a * 255;
+  }
+  maskX.putImageData(maskImg, 0, 0);
+
+  personX.globalCompositeOperation = "source-over";
+  personX.clearRect(0, 0, W, H);
+  personX.drawImage(video, 0, 0, W, H);
+  personX.globalCompositeOperation = "destination-in";
+  personX.imageSmoothingEnabled = true;
+  personX.drawImage(maskC, 0, 0, W, H);
+  personX.globalCompositeOperation = "source-over";
+
+  const el = (now - animStart) / 1000;
+  const mix = outward ? Math.min(1, el / 0.5) : Math.min(1, (D - el) / 0.5);
+  if (mix < 1){
+    ctx.drawImage(video, 0, 0, W, H);
+    ctx.globalAlpha = Math.max(0, mix); drawBg(ctx, W, H); ctx.globalAlpha = 1;
+  } else drawBg(ctx, W, H);
+  ctx.drawImage(personC, 0, 0);
+
+  if (k >= 1){
+    state = outward ? "hidden" : "visible";
+    setStatus(state === "hidden" ? "Lu lagi hilang. Jentik lagi buat muncul." : "Lu keliatan. Jentik buat hilang.");
+    setTimeout(prepareNoise, 60);
+  }
+}
+
+/* ================= Snap detection ================= */
+let analyser, tbuf, fbuf, loBin, hiBinA, hiBinB, rmsEma = 0.005, cand = null, lastSnap = 0;
+let peakShown = 0, hfShown = 0;
+let calib = null;
+
+function setupAudio(){
+  const ac = new AudioContext();
+  analyser = ac.createAnalyser();
+  analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0;
+  ac.createMediaStreamSource(stream).connect(analyser);
+  ac.resume().catch(() => {});
+  tbuf = new Float32Array(analyser.fftSize);
+  fbuf = new Float32Array(analyser.frequencyBinCount);
+  const hz = ac.sampleRate / analyser.fftSize;
+  loBin = [Math.round(150 / hz), Math.round(1500 / hz)];
+  hiBinA = Math.round(2500 / hz);
+  hiBinB = Math.min(fbuf.length - 1, Math.round(11000 / hz));
+}
+
+function listen(now){
+  if (!analyser) return;
+  analyser.getFloatTimeDomainData(tbuf);
+  let peak = 0, sum = 0;
+  for (let i = 0; i < tbuf.length; i++){ const v = tbuf[i], a = Math.abs(v); if (a > peak) peak = a; sum += v * v; }
+  const rms = Math.sqrt(sum / tbuf.length);
+  const thrP = calib ? 0.05 : volEl.value / 100, thrH = calib ? 0.2 : hfEl.value / 100;
+
+  if (cand){
+    const age = now - cand.t;
+    if (age <= 45) cand.rms = Math.max(cand.rms, rms);
+    else if (age > 60) cand.after = Math.max(cand.after, rms);
+    if (age > 200){
+      if (cand.after < cand.rms * 0.35) onSnap(cand, now);
+      else setDetect("✗ Ditolak: suaranya panjang, kayak orang ngomong", "no", true);
+      cand = null;
+    }
+  } else if (peak > thrP){
+    analyser.getFloatFrequencyData(fbuf);
+    let lo = 0, hi = 0;
+    for (let i = loBin[0]; i <= loBin[1]; i++) lo += Math.pow(10, fbuf[i] / 10);
+    for (let i = hiBinA; i <= hiBinB; i++) hi += Math.pow(10, fbuf[i] / 10);
+    const hf = hi / (lo + hi + 1e-12), attack = rms / (rmsEma + 1e-4);
+    hfShown = hf;
+    if (hf < thrH) setDetect(`✗ Ditolak: kurang tajam (${Math.round(hf * 100)}%), kayak suara ngomong`, "no");
+    else if (attack < 3) setDetect("✗ Ditolak: munculnya nggak ngagetin, ada suara lain sebelumnya", "no");
+    else cand = { t: now, rms, peak, hf, after: 0 };
+  }
+  rmsEma = rmsEma * 0.8 + rms * 0.2;
+
+  peakShown = Math.max(peak, peakShown * 0.9);
+  $("#fillVol").style.width = Math.min(100, peakShown * 100) + "%";
+  $("#markVol").style.left = thrP * 100 + "%";
+  $("#lvl").textContent = Math.round(peakShown * 100) + "%";
+  $("#fillHf").style.width = Math.min(100, hfShown * 100) + "%";
+  $("#markHf").style.left = thrH * 100 + "%";
+  $("#hfLvl").textContent = Math.round(hfShown * 100) + "%";
+}
+
+function onSnap(c, now){
+  if (calib){
+    calib.hits.push(c);
+    setDetect(`✓ Jentik ${calib.hits.length}/3 kerekam`, "ok", true);
+    if (calib.hits.length >= 3) finishCalib();
+    return;
+  }
+  if (!snapOn.checked){ setDetect("✓ Jentik kedeteksi (tapi jentik lagi dimatiin)", "ok", true); return; }
+  if (now - lastSnap < cool.value * 1000 || (state !== "visible" && state !== "hidden")){
+    setDetect("✓ Jentik kedeteksi, tapi masih jeda", "ok", true); return;
+  }
+  lastSnap = now;
+  setDetect("✓ Jentik kedeteksi", "ok", true);
+  toggle();
+}
+
+btnCalib.onclick = startCalib;
+function startCalib(){
+  if (!running || calib) return;
+  calib = { hits: [], timer: setTimeout(() => { calib = null; setStatus("Kalibrasi kelamaan. Coba lagi, jentik deket laptop.", true); }, 20000) };
+  setStatus("Kalibrasi: jentik 3 kali, kasih jeda 1 detik tiap jentik. Jangan ngomong dulu.");
+}
+function finishCalib(){
+  clearTimeout(calib.timer);
+  const minPeak = Math.min(...calib.hits.map(h => h.peak));
+  const minHf = Math.min(...calib.hits.map(h => h.hf));
+  calib = null;
+  volEl.value = Math.max(2, Math.min(90, Math.round(minPeak * 55)));
+  hfEl.value = Math.max(10, Math.min(85, Math.round(minHf * 80)));
+  volEl.dispatchEvent(new Event("input")); hfEl.dispatchEvent(new Event("input"));
+  saveSettings();
+  setStatus("Kalibrasi beres. Coba ngomong biasa, harusnya nggak ke-trigger.");
+}
+
+/* ================= Hand tracking (shared) ================= */
+let lastVT = -1, hands = [];
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const up = (lm, tip, pip) => dist(lm[tip], lm[0]) > dist(lm[pip], lm[0]) * 1.12;
+function readHands(){
+  if (!gesture || video.currentTime === lastVT) return false;
+  lastVT = video.currentTime;
+  let res;
+  try { res = gesture.recognizeForVideo(video, performance.now()); } catch { return false; }
+  hands = (res.landmarks || []).map((lm, i) => {
+    const top = (res.gestures?.[i] || [])[0];
+    const name = top?.categoryName || "";
+    const idx = up(lm, 8, 6), mid = up(lm, 12, 10), ring = up(lm, 16, 14), pink = up(lm, 20, 18);
+    let count = 0;
+    if (idx && !mid && !ring && !pink) count = 1;
+    else if (idx && mid && !ring && !pink) count = 2;
+    else if (idx && mid && ring && !pink) count = 3;
+    const thumbOut = dist(lm[4], lm[5]) > dist(lm[0], lm[5]) * 0.55;
+    return {
+      lm, name, score: top?.score || 0, idx, mid, ring, pink, count,
+      palm: name === "Open_Palm" || (idx && mid && ring && pink && thumbOut),
+      fist: (!idx && !mid && !ring && !pink) || (name === "Closed_Fist" && (top?.score || 0) > 0.6),
+      center: { x: lm[9].x * W, y: lm[9].y * H },
+      tip: { x: lm[8].x * W, y: lm[8].y * H }
+    };
+  });
+  return true;
+}
+
+/* ---------- 1€ filter: steady when slow, responsive when fast ---------- */
+class OneEuro {
+  constructor(minCut = 1.4, beta = 0.012, dCut = 1){ Object.assign(this, { minCut, beta, dCut, x: null, dx: 0, t: 0 }); }
+  static a(cut, dt){ const tau = 1 / (2 * Math.PI * cut); return 1 / (1 + tau / dt); }
+  reset(){ this.x = null; }
+  f(x, t){
+    if (this.x === null){ this.x = x; this.t = t; this.dx = 0; return x; }
+    const dt = Math.max(1e-3, t - this.t); this.t = t;
+    const ad = OneEuro.a(this.dCut, dt);
+    this.dx = ad * ((x - this.x) / dt) + (1 - ad) * this.dx;
+    const a = OneEuro.a(this.minCut + this.beta * Math.abs(this.dx), dt);
+    this.x = a * x + (1 - a) * this.x;
+    return this.x;
+  }
+}
+
+/* ---------- shared sparkle particles ---------- */
+const sparks = [];
+function addSpark(x, y, vx, vy, life, size, hue){
+  sparks.push({ x, y, vx, vy, life, max: life, s: size, hue });
+  if (sparks.length > 1500) sparks.splice(0, sparks.length - 1500);
+}
+function star(x, y, s, hue, alpha){
+  ctx.fillStyle = `hsla(${hue},100%,72%,${alpha})`;
+  ctx.beginPath();
+  ctx.moveTo(x, y - s * 2); ctx.lineTo(x + s * 0.4, y - s * 0.4); ctx.lineTo(x + s * 2, y);
+  ctx.lineTo(x + s * 0.4, y + s * 0.4); ctx.lineTo(x, y + s * 2); ctx.lineTo(x - s * 0.4, y + s * 0.4);
+  ctx.lineTo(x - s * 2, y); ctx.lineTo(x - s * 0.4, y - s * 0.4); ctx.closePath(); ctx.fill();
+}
+function drawSparks(dt){
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  for (let i = sparks.length - 1; i >= 0; i--){
+    const s = sparks[i];
+    s.life -= dt;
+    if (s.life <= 0){ sparks.splice(i, 1); continue; }
+    s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= 0.95; s.vy = s.vy * 0.95 - 25 * SC * dt;
+    const k = s.life / s.max;
+    star(s.x, s.y, s.s * k, s.hue, Math.min(1, k * 1.4));
+  }
+  ctx.restore();
+}
+function glowDot(p, r, rgb, a){
+  const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+  g.addColorStop(0, `rgba(255,255,255,${0.95 * a})`);
+  g.addColorStop(0.25, `rgba(${rgb},${0.75 * a})`);
+  g.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+}
+function label(text, x, y, color, alpha){
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+  ctx.font = `700 ${Math.round(26 * SC)}px "Bricolage Grotesque", system-ui, sans-serif`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  if (mirrorEl.checked){ ctx.translate(x, y); ctx.scale(-1, 1); ctx.translate(-x, -y); }
+  ctx.lineWidth = 5 * SC; ctx.strokeStyle = "rgba(0,0,0,.55)"; ctx.strokeText(text, x, y);
+  ctx.fillStyle = color; ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+/* ================= Mode activation by finger count ================= */
+const MODE_COUNT = 2, HOLD = 0.8;
+let actCand = 0, actT0 = 0, actProg = 0, actHand = null;
+function activation(now, fresh){
+  if (!fresh) return;
+  const h = hands[0];
+  let want = 0;
+  if (h){
+    if (mode === 0 && h.count >= 1 && h.count <= MODE_COUNT) want = h.count;
+    else if (mode !== 0 && h.palm) want = -1;
+  }
+  if (want && want === actCand){
+    actHand = h; actProg = (now - actT0) / 1000 / HOLD;
+    if (actProg >= 1){ setMode(want === -1 ? 0 : want, true); actCand = 0; actProg = 0; }
+  } else { actCand = want; actT0 = now; actProg = 0; actHand = h; }
+}
+function drawActivation(now){
+  if (actCand && actProg > 0.1 && actHand){
+    const c = actHand.center, r = 70 * SC;
+    const col = actCand === -1 ? "255,181,71" : actCand === 2 ? "92,225,255" : "255,79,216";
+    ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round"; ctx.lineWidth = 6 * SC;
+    ctx.strokeStyle = `rgba(${col},0.25)`; ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = `rgba(${col},0.95)`; ctx.beginPath();
+    ctx.arc(c.x, c.y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, actProg)); ctx.stroke();
+    ctx.restore();
+    label(actCand === -1 ? "Matiin mode" : `Mode ${actCand}`, c.x, c.y - r - 24 * SC, `rgb(${col})`, actProg * 1.5);
+  }
+  if (modeFlash){
+    const k = (now - modeFlash.t) / 1200;
+    if (k >= 1) modeFlash = null;
+    else {
+      ctx.save(); ctx.globalCompositeOperation = "lighter";
+      ctx.lineWidth = (10 * (1 - k) + 1) * SC; ctx.strokeStyle = `hsla(${modeFlash.hue},100%,65%,${1 - k})`;
+      ctx.beginPath(); ctx.arc(modeFlash.x, modeFlash.y, (70 + k * 160) * SC, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+      label(modeFlash.text, modeFlash.x, modeFlash.y - (100 + k * 30) * SC, `hsl(${modeFlash.hue},100%,75%)`, 1 - k);
+    }
+  }
+}
+
+/* ================= Mode 1: draw with one finger, fist to burst ================= */
+const HUES = [310, 190, 270, 45, 150];
+let hueIdx = 0, strokes = [], curStroke = null, lastPointT = 0, tip = null, tipVis = 0;
+let drawing = false, fistFrames = 0, blockDrawUntil = 0;
+const fx1 = new OneEuro(), fy1 = new OneEuro();
+const bursts = [];
+
+function hsl(h, l = 65, a = 1){ return `hsla(${h},100%,${l}%,${a})`; }
+function strokePath(pts){
+  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length - 1; i++){
+    const mx = (pts[i].x + pts[i + 1].x) / 2, my = (pts[i].y + pts[i + 1].y) / 2;
+    ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+  }
+  const l = pts[pts.length - 1]; ctx.lineTo(l.x, l.y);
+}
+function drawStrokes(list, alpha = 1){
+  ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  for (const st of list){
+    if (st.pts.length < 2) continue;
+    const flick = 0.88 + Math.random() * 0.12;
+    for (const [w, l, a] of [[26, 60, 0.12], [14, 62, 0.28], [6, 70, 0.75], [2.4, 95, 1]]){
+      ctx.lineWidth = w * SC; ctx.strokeStyle = hsl(st.hue, l, a * alpha * flick);
+      strokePath(st.pts); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+function releaseDrawing(){
+  const pts = strokes.flatMap(s => s.pts.map(p => ({ ...p, hue: s.hue })));
+  strokes = []; curStroke = null; drawing = false;
+  if (pts.length < 4) return;
+  let cx = 0, cy = 0, maxR = 0;
+  pts.forEach(p => { cx += p.x; cy += p.y; }); cx /= pts.length; cy /= pts.length;
+  pts.forEach(p => { maxR = Math.max(maxR, Math.hypot(p.x - cx, p.y - cy)); });
+  const groups = {};
+  pts.forEach(p => (groups[p.hue] ??= []).push(p));
+  bursts.push({ strokes: Object.entries(groups).map(([h, g]) => ({ hue: +h, pts: g })), segs: null, cx, cy, maxR: Math.max(maxR, 60 * SC), t: 0 });
+  const step = Math.max(1, Math.floor(pts.length / 500));
+  for (let i = 0; i < pts.length; i += step){
+    const p = pts[i], ang = Math.atan2(p.y - cy, p.x - cx) + (Math.random() - 0.5) * 0.6;
+    const sp = (220 + Math.random() * 520) * SC;
+    addSpark(p.x, p.y, Math.cos(ang) * sp, Math.sin(ang) * sp, 0.7 + Math.random() * 0.7, (3 + Math.random() * 5) * SC, p.hue);
+  }
+  blockDrawUntil = performance.now() + 600;
+}
+let burstStrokesCache = new WeakMap();
+function drawBursts(dt){
+  for (let i = bursts.length - 1; i >= 0; i--){
+    const b = bursts[i]; b.t += dt;
+    const k = Math.min(1, b.t / 1.0), e = 1 - Math.pow(1 - k, 3);
+    if (k >= 1){ bursts.splice(i, 1); continue; }
+    if (!b.segs) b.segs = b.strokes;
+    ctx.save();
+    ctx.translate(b.cx, b.cy); ctx.scale(1 + e * 1.7, 1 + e * 1.7); ctx.translate(-b.cx, -b.cy);
+    drawStrokes(b.segs, (1 - k) * (1 - k));
+    ctx.restore();
+    ctx.save(); ctx.globalCompositeOperation = "lighter";
+    const hue = b.segs[0]?.hue ?? 310;
+    ctx.lineWidth = (14 * (1 - k) + 1) * SC; ctx.strokeStyle = hsl(hue, 70, 0.8 * (1 - k));
+    ctx.beginPath(); ctx.arc(b.cx, b.cy, b.maxR * (0.3 + e * 2.2), 0, Math.PI * 2); ctx.stroke();
+    if (k < 0.35) glowDot({ x: b.cx, y: b.cy }, b.maxR * (0.6 + k * 2), "255,255,255", 1 - k / 0.35);
+    ctx.restore();
+  }
+}
+function mode1(now, dt, fresh){
+  if (fresh){
+    const h = hands.find(x => x.idx && !x.mid) || hands[0];
+    if (h){
+      fistFrames = h.fist ? fistFrames + 1 : 0;
+      if (fistFrames >= 2 && strokes.some(s => s.pts.length > 2)){ releaseDrawing(); fistFrames = 0; }
+      const canStart = h.idx && !h.mid && !h.ring && !h.pink;
+      const canKeep = h.idx && !(h.mid && h.ring);
+      if ((drawing ? canKeep : canStart) && now > blockDrawUntil){
+        const t = now / 1000;
+        if (!curStroke || now - lastPointT > 220){
+          fx1.reset(); fy1.reset();
+          curStroke = { pts: [], hue: HUES[hueIdx++ % HUES.length] }; strokes.push(curStroke);
+        }
+        tip = { x: fx1.f(h.tip.x, t), y: fy1.f(h.tip.y, t) };
+        drawing = true; lastPointT = now;
+        const last = curStroke.pts[curStroke.pts.length - 1];
+        if (!last || dist(last, tip) > 2 * SC) curStroke.pts.push({ x: tip.x, y: tip.y });
+        for (let k = 0; k < 2; k++){
+          const a = Math.random() * Math.PI * 2, sp = (20 + Math.random() * 80) * SC;
+          addSpark(tip.x, tip.y, Math.cos(a) * sp, Math.sin(a) * sp, 0.5 + Math.random() * 0.4, (2 + Math.random() * 3) * SC, curStroke.hue);
+        }
+      } else drawing = false;
+    } else drawing = false;
+  }
+  if (now - lastPointT > 220) curStroke = null;
+  tipVis = now - lastPointT < 150 ? Math.min(1, tipVis + dt * 8) : Math.max(0, tipVis - dt * 5);
+
+  drawStrokes(strokes);
+  if (tip && tipVis > 0){
+    ctx.save(); ctx.globalCompositeOperation = "lighter";
+    glowDot(tip, 34 * SC, "255,120,230", tipVis);
+    ctx.restore();
+  }
+}
+
+/* ================= Mode 2: ✌️ lightning ================= */
+let victory = [], glow = 0, vtips = [];
+function bolt(a, b){
+  const segs = 9, dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
+  ctx.beginPath(); ctx.moveTo(a.x, a.y);
+  for (let i = 1; i < segs; i++){
+    const t = i / segs, off = (Math.random() - 0.5) * Math.min(26 * SC, len * 0.35);
+    ctx.lineTo(a.x + dx * t + nx * off, a.y + dy * t + ny * off);
+  }
+  ctx.lineTo(b.x, b.y); ctx.stroke();
+}
+function mode2(now, dt, fresh){
+  if (fresh){
+    victory = hands.filter(h => h.count === 2 || (h.name === "Victory" && h.score > 0.55))
+      .map(h => [h.lm[8], h.lm[12]].map(p => ({ x: p.x * W, y: p.y * H })));
+  }
+  if (victory.length){
+    glow = Math.min(1, glow + dt * 6); vtips = victory;
+    vtips.forEach(hh => hh.forEach(p => {
+      for (let k = 0; k < 3; k++){
+        const a = Math.random() * Math.PI * 2, sp = (40 + Math.random() * 140) * SC;
+        addSpark(p.x, p.y, Math.cos(a) * sp, Math.sin(a) * sp - 60 * SC, 0.6 + Math.random() * 0.5, (3 + Math.random() * 5) * SC, Math.random() < 0.5 ? 310 : 190);
+      }
+    }));
+  } else glow = Math.max(0, glow - dt * 3);
+  if (glow <= 0) return;
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  for (const [a, b] of vtips){
+    glowDot(a, 55 * SC * glow, "255,79,216", glow);
+    glowDot(b, 55 * SC * glow, "92,225,255", glow);
+    ctx.lineCap = "round"; ctx.shadowBlur = 18; ctx.shadowColor = "#5ce1ff";
+    ctx.strokeStyle = `rgba(200,245,255,${glow})`; ctx.lineWidth = 3 * SC; bolt(a, b);
+    ctx.shadowColor = "#ff4fd8";
+    ctx.strokeStyle = `rgba(255,120,230,${0.8 * glow})`; ctx.lineWidth = 1.5 * SC; bolt(a, b);
+    ctx.shadowBlur = 0;
+  }
+  ctx.restore();
+}
+
+/* Tambah mode baru: bikin function mode3(now, dt, fresh), naikin MODE_COUNT, panggil di handEffects. */
+function handEffects(now, dt){
+  const fresh = readHands();
+  activation(now, fresh);
+  if (mode === 1) mode1(now, dt, fresh);
+  else if (mode === 2) mode2(now, dt, fresh);
+  drawBursts(dt);
+  drawActivation(now);
+  drawSparks(dt);
+}
+
+/* ================= Main loop ================= */
+let prev = performance.now();
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt = Math.min(0.05, (now - prev) / 1000); prev = now;
+  if (!running) return;
+  listen(now);
+  bgTick(now);
+
+  if (state === "visible"){
+    ctx.drawImage(video, 0, 0, W, H);
+    handEffects(now, dt);
+  } else if (state === "hidden"){
+    drawBg(ctx, W, H);
+    drawBursts(dt); drawSparks(dt);
+  } else {
+    transitionFrame(now);
+    drawBursts(dt); drawSparks(dt);
+  }
+  drawDust(dt);
+
+  if (countdown){
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,.45)"; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#fff"; ctx.font = `800 ${Math.round(H * 0.3)}px "Bricolage Grotesque", system-ui, sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    if (mirrorEl.checked){ ctx.translate(W, 0); ctx.scale(-1, 1); }
+    ctx.fillText(countdown, W / 2, H / 2);
+    ctx.restore();
+  }
+  if (recLeft){
+    ctx.save();
+    if (mirrorEl.checked){ ctx.translate(W, 0); ctx.scale(-1, 1); }
+    ctx.fillStyle = "#ff3b5c"; ctx.beginPath(); ctx.arc(34 * SC, 34 * SC, 11 * SC, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.font = `600 ${Math.round(22 * SC)}px "Bricolage Grotesque", system-ui, sans-serif`;
+    ctx.textBaseline = "middle"; ctx.fillText(`Ngerekam ${recLeft}`, 54 * SC, 35 * SC);
+    ctx.restore();
+  }
+}
+requestAnimationFrame(loop);
+setMode(0);
+
+/* Jalan otomatis kalau dibuka sebagai Browser Source di OBS (atau pakai ?obs di URL). */
+if (window.obsstudio || new URLSearchParams(location.search).has("obs")){
+  document.body.classList.add("clean");
+  setTimeout(() => btnStart.click(), 400);
+}
+
+/* ================= Keys ================= */
+addEventListener("keydown", e => {
+  if (e.code === "Space"){ e.preventDefault(); toggle(); }
+  else if (e.key === "b" || e.key === "B") captureBg();
+  else if (e.key === "k" || e.key === "K") startCalib();
+  else if (e.key === "0" || e.key === "1" || e.key === "2") setMode(+e.key);
+  else if (e.key === "c" || e.key === "C"){ strokes = []; curStroke = null; }
+  else if (e.key === "h" || e.key === "H") document.body.classList.toggle("clean");
+  else if (e.key === "f" || e.key === "F"){
+    if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {});
+  }
+});
+</script>
+</body>
+</html>
