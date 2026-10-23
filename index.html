@@ -103,6 +103,7 @@
       <label><input type="radio" name="mode" value="1"> Mode 1 ☝️ Gambar di udara</label>
       <label><input type="radio" name="mode" value="2"> Mode 2 ✌️ Petir di jari</label>
       <label><input type="radio" name="mode" value="3"> Mode 3 🔮 Bola plasma</label>
+      <label><input type="radio" name="mode" value="4"> Mode 4 🖼️ Portal filter</label>
     </div>
     <p class="note" id="modeNote"></p>
     <label class="check"><input type="checkbox" id="mirror" checked> Cerminin layar (biar gambar & tulisan kebaca)</label>
@@ -115,6 +116,8 @@
     <dt>☝️ tahan</dt><dd>aktifin Mode 1</dd>
     <dt>✌️ tahan</dt><dd>aktifin Mode 2</dd>
     <dt>3 jari tahan</dt><dd>aktifin Mode 3</dd>
+    <dt>4 jari tahan</dt><dd>aktifin Mode 4</dd>
+    <dt>N / P</dt><dd>filter portal berikut / sebelumnya</dd>
     <dt>👎 tahan</dt><dd>matiin mode</dd>
     <dt>0–3</dt><dd>ganti mode lewat keyboard</dd>
     <dt>C</dt><dd>hapus gambar</dd>
@@ -138,7 +141,8 @@ const MODE_NOTES = {
   0: "Belum ada mode aktif. Tahan ☝️ 1 jari = Mode 1, ✌️ 2 jari = Mode 2, 3 jari = Mode 3.",
   1: "☝️ Telunjuk buat gambar, kepal tangan buat ngebuyarin. Tahan 👎 buat matiin mode.",
   2: "✌️ ke kamera buat petir. Tahan 👎 buat matiin mode.",
-  3: "🖐️ Buka telapak buat ngisi bola plasma, kepal tangan buat ledakin. Tahan 👎 buat matiin mode."
+  3: "🖐️ Buka telapak buat ngisi bola plasma, kepal tangan buat ledakin. Tahan 👎 buat matiin mode.",
+  4: "Bikin bingkai pakai 2 tangan (telunjuk & jempol) buat buka portal. Pinch jempol + kelingking buat ganti filter. Tahan 👎 buat matiin mode."
 };
 let mode = 0, modeFlash = null;
 function setMode(m, fromGesture = false){
@@ -148,7 +152,7 @@ function setMode(m, fromGesture = false){
   document.querySelectorAll('input[name=mode]').forEach(r => r.checked = +r.value === m);
   $("#modeNote").textContent = MODE_NOTES[m];
   strokes = []; curStroke = null; victory = []; glow = 0; tipVis = 0; drawing = false;
-  resetOrb();
+  resetOrb(); resetPortal();
   blockDrawUntil = performance.now() + 600;
   if (fromGesture && actHand){
     const c = actHand.center, hue = MODE_HUE[m];
@@ -672,6 +676,7 @@ function readHands(){
     if (idx && !mid && !ring && !pink) count = 1;
     else if (idx && mid && !ring && !pink) count = 2;
     else if (idx && mid && ring && !pink) count = 3;
+    else if (idx && mid && ring && pink) count = 4;
     const palmC = { x: (lm[0].x + lm[5].x + lm[17].x) / 3 * W, y: (lm[0].y + lm[5].y + lm[17].y) / 3 * H };
     return {
       lm, name, score, idx, mid, ring, pink, count, side,
@@ -764,8 +769,8 @@ function drawWaves(dt){
 }
 
 /* ================= Mode activation by finger count, 👎 to turn off ================= */
-const MODE_COUNT = 3, HOLD = 0.8;
-const MODE_HUE = { 0: 45, 1: 310, 2: 190, 3: 275 };
+const MODE_COUNT = 4, HOLD = 0.8;
+const MODE_HUE = { 0: 45, 1: 310, 2: 190, 3: 275, 4: 160 };
 let actCand = 0, actT0 = 0, actProg = 0, actHand = null;
 function activation(now, fresh){
   if (!fresh) return;
@@ -1016,12 +1021,179 @@ function detonate(){
   resetOrb();
 }
 
+/* ================= Mode 4: 🖼️ filter portal between two hands ================= */
+const FILTERS = ["Duotone", "Thermal", "Sketsa", "Glitch", "8-bit", "Retro VHS"];
+let filterIdx = 0, portalRaw = null, portalAmt = 0, portalWanted = false, portalSeen = 0, filterFlash = 0, lastPinch = 0;
+const pinchState = {};
+const pf = Array.from({ length: 8 }, () => new OneEuro(1.6, 0.02));
+const fxC = document.createElement("canvas"), fxX = fxC.getContext("2d", { willReadFrequently: true });
+const pxC = document.createElement("canvas"), pxX = pxC.getContext("2d", { willReadFrequently: true });
+const thermalLUT = (() => {
+  const stops = [[0, [0, 0, 25]], [0.2, [45, 0, 140]], [0.42, [175, 0, 160]], [0.6, [255, 40, 40]], [0.8, [255, 175, 0]], [1, [255, 255, 225]]];
+  const lut = new Uint8Array(768);
+  for (let i = 0; i < 256; i++){
+    const t = i / 255;
+    let k = 0; while (k < stops.length - 2 && t > stops[k + 1][0]) k++;
+    const [t0, c0] = stops[k], [t1, c1] = stops[k + 1], u = (t - t0) / (t1 - t0);
+    for (let j = 0; j < 3; j++) lut[i * 3 + j] = c0[j] + (c1[j] - c0[j]) * u;
+  }
+  return lut;
+})();
+
+function resetPortal(){ portalRaw = null; portalAmt = 0; portalWanted = false; pf.forEach(f => f.reset()); }
+function nextFilter(step = 1){ filterIdx = (filterIdx + step + FILTERS.length) % FILTERS.length; filterFlash = performance.now(); }
+function orderQuad(ps){
+  const c = { x: ps.reduce((s, p) => s + p.x, 0) / ps.length, y: ps.reduce((s, p) => s + p.y, 0) / ps.length };
+  return { c, q: ps.map(p => ({ x: p.x, y: p.y, a: Math.atan2(p.y - c.y, p.x - c.x) })).sort((a, b) => a.a - b.a) };
+}
+function polyArea(q){
+  let s = 0;
+  for (let i = 0; i < q.length; i++){ const a = q[i], b = q[(i + 1) % q.length]; s += a.x * b.y - b.x * a.y; }
+  return Math.abs(s) / 2;
+}
+
+function renderFilter(bx, by, bw, bh, now){
+  const scale = Math.min(1, 480 / bw), fw = Math.max(8, Math.round(bw * scale)), fh = Math.max(8, Math.round(bh * scale));
+  if (fxC.width !== fw || fxC.height !== fh){ fxC.width = fw; fxC.height = fh; }
+  const name = FILTERS[filterIdx];
+
+  if (name === "8-bit"){
+    const pw = Math.max(4, Math.round(bw / 14)), ph = Math.max(3, Math.round(bh / 14));
+    if (pxC.width !== pw || pxC.height !== ph){ pxC.width = pw; pxC.height = ph; }
+    pxX.drawImage(video, bx, by, bw, bh, 0, 0, pw, ph);
+    const im = pxX.getImageData(0, 0, pw, ph), d = im.data;
+    for (let i = 0; i < d.length; i += 4){ d[i] = (d[i] >> 6) * 85; d[i + 1] = (d[i + 1] >> 6) * 85; d[i + 2] = (d[i + 2] >> 6) * 85; }
+    pxX.putImageData(im, 0, 0);
+    fxX.imageSmoothingEnabled = false;
+    fxX.drawImage(pxC, 0, 0, fw, fh);
+    fxX.imageSmoothingEnabled = true;
+    return { fw, fh };
+  }
+
+  fxX.drawImage(video, bx, by, bw, bh, 0, 0, fw, fh);
+  const img = fxX.getImageData(0, 0, fw, fh), d = img.data, n = fw * fh;
+
+  if (name === "Duotone"){
+    for (let i = 0; i < d.length; i += 4){
+      let l = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
+      l = l * l * (3 - 2 * l);
+      d[i] = 40 + 215 * l; d[i + 1] = 12 + 90 * l; d[i + 2] = 95 + 95 * l;
+    }
+  } else if (name === "Thermal"){
+    for (let i = 0; i < d.length; i += 4){
+      const l = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) | 0;
+      d[i] = thermalLUT[l * 3]; d[i + 1] = thermalLUT[l * 3 + 1]; d[i + 2] = thermalLUT[l * 3 + 2];
+    }
+  } else if (name === "Sketsa"){
+    const L = new Float32Array(n);
+    for (let i = 0, p = 0; i < n; i++, p += 4) L[i] = 0.299 * d[p] + 0.587 * d[p + 1] + 0.114 * d[p + 2];
+    for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++){
+      const p = (y * fw + x) * 4;
+      let v = 255;
+      if (x > 0 && y > 0 && x < fw - 1 && y < fh - 1){
+        const i = y * fw + x;
+        const gx = -L[i - fw - 1] - 2 * L[i - 1] - L[i + fw - 1] + L[i - fw + 1] + 2 * L[i + 1] + L[i + fw + 1];
+        const gy = -L[i - fw - 1] - 2 * L[i - fw] - L[i - fw + 1] + L[i + fw - 1] + 2 * L[i + fw] + L[i + fw + 1];
+        v = 255 - Math.min(255, Math.hypot(gx, gy) * 1.4);
+      }
+      d[p] = v * 0.98; d[p + 1] = v * 0.96; d[p + 2] = v * 0.9;
+    }
+  } else if (name === "Glitch"){
+    const src = new Uint8ClampedArray(d), split = Math.max(2, Math.round(fw * 0.012));
+    const bands = 14, bh2 = Math.ceil(fh / bands), offs = [];
+    for (let b = 0; b < bands; b++) offs.push(Math.random() < 0.28 ? Math.round((Math.random() - 0.5) * fw * 0.18) : 0);
+    for (let y = 0; y < fh; y++){
+      const off = offs[(y / bh2) | 0], dark = y % 2 ? 0.82 : 1;
+      for (let x = 0; x < fw; x++){
+        const p = (y * fw + x) * 4, row = y * fw;
+        const xr = Math.min(fw - 1, Math.max(0, x + off + split)), xg = Math.min(fw - 1, Math.max(0, x + off)), xb = Math.min(fw - 1, Math.max(0, x + off - split));
+        d[p] = src[(row + xr) * 4] * dark; d[p + 1] = src[(row + xg) * 4 + 1] * dark; d[p + 2] = src[(row + xb) * 4 + 2] * dark;
+      }
+    }
+  } else if (name === "Retro VHS"){
+    for (let y = 0; y < fh; y++){
+      const line = y % 3 === 0 ? 0.72 : 1;
+      for (let x = 0; x < fw; x++){
+        const p = (y * fw + x) * 4, r = d[p], g = d[p + 1], b = d[p + 2], nz = (Math.random() - 0.5) * 26;
+        d[p] = Math.min(255, (0.393 * r + 0.769 * g + 0.189 * b) * 0.95 + nz) * line;
+        d[p + 1] = Math.min(255, (0.349 * r + 0.686 * g + 0.168 * b) * 0.9 + nz) * line;
+        d[p + 2] = Math.min(255, (0.272 * r + 0.534 * g + 0.131 * b) * 0.85 + nz) * line;
+      }
+    }
+  }
+  fxX.putImageData(img, 0, 0);
+  if (name === "Retro VHS"){
+    const g = fxX.createRadialGradient(fw / 2, fh / 2, Math.min(fw, fh) * 0.3, fw / 2, fh / 2, Math.max(fw, fh) * 0.75);
+    g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,0.6)");
+    fxX.fillStyle = g; fxX.fillRect(0, 0, fw, fh);
+  }
+  return { fw, fh };
+}
+
+function mode4(now, dt, fresh){
+  if (fresh){
+    portalWanted = false;
+    if (hands.length >= 2){
+      const two = [...hands].sort((a, b) => a.center.x - b.center.x).slice(0, 2);
+      for (const h of two){
+        const pinch = dist(h.lm[4], h.lm[20]) / (dist(h.lm[0], h.lm[9]) || 1) < 0.4;
+        if (pinch && !pinchState[h.side] && now - lastPinch > 700 && portalAmt > 0.5){ nextFilter(1); lastPinch = now; }
+        pinchState[h.side] = pinch; h.pinching = pinch;
+      }
+      const t = now / 1000, src = [two[0].lm[8], two[0].lm[4], two[1].lm[8], two[1].lm[4]];
+      if (!portalRaw) portalRaw = src.map(p => ({ x: p.x * W, y: p.y * H }));
+      src.forEach((p, i) => {
+        if (two[i < 2 ? 0 : 1].pinching) return;      // hold that corner still while pinching
+        portalRaw[i] = { x: pf[i * 2].f(p.x * W, t), y: pf[i * 2 + 1].f(p.y * H, t) };
+      });
+      const area = polyArea(orderQuad(portalRaw).q);
+      portalWanted = two[0].idx && two[1].idx && area > W * H * 0.02;
+      if (portalWanted) portalSeen = now;
+    }
+  }
+  const was = portalAmt;
+  portalAmt = portalWanted && now - portalSeen < 300 ? Math.min(1, portalAmt + dt * 4) : Math.max(0, portalAmt - dt * 3.5);
+  if (was === 0 && portalAmt > 0) filterFlash = now;
+  if (portalAmt <= 0){ if (!portalWanted){ portalRaw = null; pf.forEach(f => f.reset()); } return; }
+  if (!portalRaw) return;
+
+  const { c, q: q0 } = orderQuad(portalRaw);
+  const e = 1 - Math.pow(1 - portalAmt, 3);
+  const q = q0.map(p => ({ x: c.x + (p.x - c.x) * e, y: c.y + (p.y - c.y) * e }));
+  let bx = Math.max(0, Math.floor(Math.min(...q.map(p => p.x)))), by = Math.max(0, Math.floor(Math.min(...q.map(p => p.y))));
+  const ex = Math.min(W, Math.ceil(Math.max(...q.map(p => p.x)))), ey = Math.min(H, Math.ceil(Math.max(...q.map(p => p.y))));
+  const bw = ex - bx, bh = ey - by;
+  if (bw < 8 || bh < 8) return;
+
+  const { fw, fh } = renderFilter(bx, by, bw, bh, now);
+  const path = () => { ctx.beginPath(); q.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath(); };
+  ctx.save(); path(); ctx.clip();
+  ctx.globalAlpha = Math.min(1, portalAmt * 1.3);
+  ctx.drawImage(fxC, 0, 0, fw, fh, bx, by, bw, bh);
+  ctx.restore();
+
+  const hue = (now / 12) % 360;
+  ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineJoin = "round";
+  for (const [w, l, a] of [[20, 60, 0.15], [9, 65, 0.4], [3, 85, 1]]){
+    ctx.lineWidth = w * SC; ctx.strokeStyle = `hsla(${hue},100%,${l}%,${a * portalAmt})`; path(); ctx.stroke();
+  }
+  q.forEach((p, i) => glowDot(p, 26 * SC * portalAmt, i % 2 ? "92,225,255" : "255,79,216", portalAmt));
+  ctx.restore();
+  if (Math.random() < 0.6 * portalAmt){
+    const i = (Math.random() * 4) | 0, a = q[i], b = q[(i + 1) % 4], t = Math.random();
+    addSpark(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, (Math.random() - 0.5) * 80 * SC, (Math.random() - 0.5) * 80 * SC, 0.5, (2 + Math.random() * 3) * SC, hue);
+  }
+  const fk = (now - filterFlash) / 1300;
+  if (fk < 1) label(FILTERS[filterIdx], c.x, by - 26 * SC, `hsl(${hue},100%,78%)`, 1 - fk * fk);
+}
+
 /* While vanishing/hidden: no new hand input, effects wind down on their own. */
 function handEffectsIdle(now, dt){
   hands = []; victory = []; actCand = 0; actProg = 0; drawing = false;
   if (mode === 1) mode1(now, dt, false);
   else if (mode === 2) mode2(now, dt, false);
   else if (mode === 3) mode3(now, dt, false);
+  else if (mode === 4) mode4(now, dt, false);
   drawBursts(dt);
   drawWaves(dt);
   drawActivation(now);
@@ -1033,7 +1205,7 @@ function clearHandState(){
   for (const k in fingerHist) delete fingerHist[k];
   actCand = 0; actProg = 0; actHand = null; modeFlash = null;
   strokes = []; curStroke = null; drawing = false; tip = null; tipVis = 0; fistFrames = 0;
-  resetOrb();
+  resetOrb(); resetPortal();
   lastVT = -1;
   blockDrawUntil = performance.now() + 800;
 }
@@ -1045,6 +1217,7 @@ function handEffects(now, dt){
   if (mode === 1) mode1(now, dt, fresh);
   else if (mode === 2) mode2(now, dt, fresh);
   else if (mode === 3) mode3(now, dt, fresh);
+  else if (mode === 4) mode4(now, dt, fresh);
   drawBursts(dt);
   drawWaves(dt);
   drawActivation(now);
@@ -1105,7 +1278,9 @@ addEventListener("keydown", e => {
   if (e.code === "Space"){ e.preventDefault(); toggle(); }
   else if (e.key === "b" || e.key === "B") captureBg();
   else if (e.key === "k" || e.key === "K") startCalib();
-  else if (["0", "1", "2", "3"].includes(e.key)) setMode(+e.key);
+  else if (["0", "1", "2", "3", "4"].includes(e.key)) setMode(+e.key);
+  else if (e.key === "n" || e.key === "N") nextFilter(1);
+  else if (e.key === "p" || e.key === "P") nextFilter(-1);
   else if (e.key === "c" || e.key === "C"){ strokes = []; curStroke = null; }
   else if (e.key === "h" || e.key === "H") document.body.classList.toggle("clean");
   else if (e.key === "f" || e.key === "F"){
