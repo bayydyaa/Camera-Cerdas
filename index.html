@@ -112,6 +112,7 @@
 
   <dl class="keys">
     <dt>Spasi</dt><dd>hilang / muncul manual</dd>
+    <dt>Esc</dt><dd>darurat: langsung muncul + efek mati</dd>
     <dt>B</dt><dd>rekam ruangan kosong</dd>
     <dt>K</dt><dd>kalibrasi jentik</dd>
     <dt>☝️ tahan</dt><dd>aktifin Mode 1</dd>
@@ -151,6 +152,12 @@ let mode = 0, modeFlash = null;
 function setMode(m, fromGesture = false){
   if (mode === 1 && m !== 1 && strokes.length) releaseDrawing();
   if (mode === 3 && m !== 3 && orb) detonate();
+  if (mode === 2 && m !== 2 && seal) blowSeal();
+  if (mode === 5 && m !== 5 && hole){ collapseHole(hole); }
+  if (mode === 4 && m !== 4 && portalD && portalAmt > 0.2){
+    const cx = portalD.reduce((a, p) => a + p.x, 0) / 4, cy = portalD.reduce((a, p) => a + p.y, 0) / 4;
+    shockwave(cx, cy, 60 * SC, (performance.now() / 12) % 360);
+  }
   mode = m;
   document.querySelectorAll('input[name=mode]').forEach(r => r.checked = +r.value === m);
   $("#modeNote").textContent = MODE_NOTES[m];
@@ -209,7 +216,7 @@ let edgeImg = null, warmTick = 0;
 let maskImg = null, conf = null, smallPix = null, noiseF = null, maskFresh = true;
 
 let stream = null, running = false, bgReady = false;
-let state = "visible", animStart = 0, countdown = 0, recLeft = 0;
+let state = "visible", animStart = 0, countdown = 0, recLeft = 0, quality = 1;
 let segmenter = null, gesture = null;
 
 /* ================= Start ================= */
@@ -465,7 +472,8 @@ function spawnAt(i, outward){
   }
 }
 function drawDust(dt){
-  if (dust.length > 4500) dust.splice(0, dust.length - 4500);
+  const dcap = Math.round(4500 * quality);
+  if (dust.length > dcap) dust.splice(0, dust.length - dcap);
   for (let i = dust.length - 1; i >= 0; i--){
     const d = dust[i];
     d.life -= dt;
@@ -489,6 +497,13 @@ function toggle(){
   else if (state === "hidden"){ clearHandState(); state = "reappearing"; animStart = performance.now(); lastMaskVT = -1; maskFresh = true; }
 }
 btnToggle.onclick = toggle;
+/* Darurat pas live: langsung keliatan lagi + semua efek mati. */
+function panicReset(){
+  setMode(0); clearHandState();
+  state = "visible"; dust.length = 0; sparks.length = 0; waves.length = 0; bursts.length = 0;
+  modeFlash = null; ringGhost = null;
+  setStatus("Reset darurat: lu keliatan, semua efek mati.");
+}
 
 $("#btnLink").onclick = async () => {
   if (location.protocol === "file:"){
@@ -502,13 +517,13 @@ $("#btnLink").onclick = async () => {
 
 function transitionFrame(now){
   const D = +durEl.value, k = Math.min(1, (now - animStart) / 1000 / D);
-  const ease = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+  const ease = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
   const p = state === "dissolving" ? ease : 1 - ease;
   readMask();
 
   const SOFT = 0.1, th = p * (1 + SOFT) - SOFT, md = maskImg.data, ed = edgeImg.data, outward = state === "dissolving";
   const edgeFade = Math.min(1, k * 6, (1 - k) * 6);
-  let budget = 380;
+  let budget = Math.round(380 * quality);
   for (let i = 0; i < MN; i++){
     const c = conf[i];
     let a = 0, e = 0;
@@ -734,7 +749,8 @@ const approach = (cur, target, dt, k = 22) => cur + (target - cur) * (1 - Math.e
 const sparks = [];
 function addSpark(x, y, vx, vy, life, size, hue){
   sparks.push({ x, y, vx, vy, life, max: life, s: size, hue });
-  if (sparks.length > 1800) sparks.splice(0, sparks.length - 1800);
+  const cap = Math.round(1800 * quality);
+  if (sparks.length > cap) sparks.splice(0, sparks.length - cap);
 }
 function star(x, y, s, hue, alpha){
   ctx.fillStyle = `hsla(${hue},100%,72%,${alpha})`;
@@ -817,9 +833,23 @@ function activation(now, fresh){
     if (actProg >= 1){ setMode(want === -1 ? 0 : want, true); actCand = 0; actProg = 0; }
   } else { actCand = want; actT0 = now; actProg = 0; actHand = h; }
 }
+let ringGhost = null;
 function drawActivation(now){
   if (actCand && actProg > 0.1 && actHand){
-    const c = actHand.center, r = 70 * SC, hue = actCand === -1 ? 40 : MODE_HUE[actCand];
+    ringGhost = { c: { ...actHand.center }, prog: actProg, hue: actCand === -1 ? 40 : MODE_HUE[actCand], a: 1 };
+  } else if (ringGhost){
+    ringGhost.a -= 0.08;
+    if (ringGhost.a > 0){
+      const g = ringGhost, r = 70 * SC;
+      ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round"; ctx.lineWidth = 6 * SC;
+      ctx.strokeStyle = `hsla(${g.hue},100%,65%,${0.9 * g.a})`; ctx.beginPath();
+      ctx.arc(g.c.x, g.c.y, r * (1 + (1 - g.a) * 0.3), -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, g.prog)); ctx.stroke();
+      ctx.restore();
+    } else ringGhost = null;
+  }
+  if (actCand && actProg > 0.1 && actHand){
+    const c = actHand.center, hue = actCand === -1 ? 40 : MODE_HUE[actCand];
+    const pe = 1 - Math.pow(1 - Math.min(1, actProg), 2), r = 70 * SC * (0.85 + 0.15 * pe);
     ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round"; ctx.lineWidth = 6 * SC;
     ctx.strokeStyle = `hsla(${hue},100%,65%,0.25)`; ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2); ctx.stroke();
     ctx.strokeStyle = `hsla(${hue},100%,65%,0.95)`; ctx.beginPath();
@@ -1054,7 +1084,8 @@ const thermalLUT = (() => {
 })();
 
 function resetPortal(){ portalT = null; portalD = null; portalAmt = 0; for (const k in pinchState) delete pinchState[k]; for (const k in pinchT) delete pinchT[k]; pf.forEach(f => f.reset()); }
-function nextFilter(step = 1){ filterIdx = (filterIdx + step + FILTERS.length) % FILTERS.length; filterFlash = performance.now(); }
+let switchFlash = 0;
+function nextFilter(step = 1){ filterIdx = (filterIdx + step + FILTERS.length) % FILTERS.length; filterFlash = switchFlash = performance.now(); }
 
 function renderFilter(bx, by, bw, bh){
   const scale = Math.min(1, 480 / bw), fw = Math.max(8, Math.round(bw * scale)), fh = Math.max(8, Math.round(bh * scale));
@@ -1201,6 +1232,8 @@ function mode4(now, dt, fresh){
   ctx.save(); path(); ctx.clip();
   ctx.globalAlpha = Math.min(1, portalAmt * 1.3);
   ctx.drawImage(fxC, 0, 0, fw, fh, bx, by, bw, bh);
+  const sk = (now - switchFlash) / 260;
+  if (sk < 1){ ctx.globalAlpha = 1; ctx.fillStyle = `rgba(255,255,255,${0.55 * (1 - sk) * (1 - sk)})`; ctx.fillRect(bx, by, bw, bh); }
   ctx.restore();
 
   const hue = (now / 12) % 360;
@@ -1637,10 +1670,12 @@ function handEffects(now, dt){
 }
 
 /* ================= Main loop ================= */
-let prev = performance.now();
+let prev = performance.now(), frameAvg = 1 / 60;
 function loop(now){
   requestAnimationFrame(loop);
   const dt = Math.min(0.05, (now - prev) / 1000); prev = now;
+  frameAvg = frameAvg * 0.95 + dt * 0.05;
+  quality = frameAvg > 1 / 32 ? 0.55 : frameAvg > 1 / 45 ? 0.8 : 1;
   if (!running) return;
   listen(now);
   bgTick(now);
@@ -1688,6 +1723,7 @@ if (window.obsstudio || new URLSearchParams(location.search).has("obs")){
 /* ================= Keys ================= */
 addEventListener("keydown", e => {
   if (e.code === "Space"){ e.preventDefault(); toggle(); }
+  else if (e.key === "Escape") panicReset();
   else if (e.key === "b" || e.key === "B") captureBg();
   else if (e.key === "k" || e.key === "K") startCalib();
   else if (["0", "1", "2", "3", "4", "5"].includes(e.key)) setMode(+e.key);
