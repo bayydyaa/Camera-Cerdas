@@ -118,7 +118,7 @@
     <dt>3 jari tahan</dt><dd>aktifin Mode 3</dd>
     <dt>4 jari tahan</dt><dd>aktifin Mode 4</dd>
     <dt>N / P</dt><dd>filter portal berikut / sebelumnya</dd>
-    <dt>C</dt><dd>hapus gambar (Mode 1) / ganti 2D-3D (Mode 4)</dd>
+    <dt>C</dt><dd>hapus gambar (Mode 1)</dd>
     <dt>👎 tahan</dt><dd>matiin mode</dd>
     <dt>0–3</dt><dd>ganti mode lewat keyboard</dd>
     <dt>H</dt><dd>sembunyiin / munculin panel</dd>
@@ -142,7 +142,7 @@ const MODE_NOTES = {
   1: "☝️ Telunjuk buat gambar, kepal tangan buat ngebuyarin. Tahan 👎 buat matiin mode.",
   2: "✌️ ke kamera buat petir. Tahan 👎 buat matiin mode.",
   3: "🖐️ Buka telapak buat ngisi bola plasma, kepal tangan buat ledakin. Tahan 👎 buat matiin mode.",
-  4: "Bentangin 2 tangan (telapak kebuka) buat buka portal. Pinch jempol + kelingking = ganti filter. Kepal 2 tangan = ganti 2D/3D. Tahan 👎 buat matiin mode."
+  4: "Bikin bingkai pakai telunjuk & jempol kedua tangan buat buka portal. Telunjuk ketemu jempol = ganti filter. Tahan 👎 buat matiin mode."
 };
 let mode = 0, modeFlash = null;
 function setMode(m, fromGesture = false){
@@ -1034,14 +1034,10 @@ function detonate(){
   resetOrb();
 }
 
-/* ================= Mode 4: 🖼️ portal filter (ala RetroLens) =================
-   Bentangin 2 tangan  -> portal kebuka di antara kedua tangan
-   Pinch jempol+kelingking -> ganti filter
-   Kepal 2 tangan (tahan) / tombol C -> ganti mode 2D / 3D */
+/* ================= Mode 4: 🖼️ portal filter (ala RetroLens) ================= */
 const FILTERS = ["Dual-tone", "Thermal", "Sketsa", "Glitch", "8-bit", "Retro VHS"];
-let filterIdx = 0, portal3D = false, portalAmt = 0, portalSeen = 0, filterFlash = 0, lastPinch = 0;
+let filterIdx = 0, portalAmt = 0, portalSeen = 0, filterFlash = 0, lastPinch = 0;
 let portalT = null, portalD = null;              // target corners (filtered) and displayed corners (smoothed per frame)
-let bothFistSince = 0, lastToggle3D = 0;
 const pinchState = {};
 const pf = Array.from({ length: 8 }, () => new OneEuro(1.6, 0.02));
 const fxC = document.createElement("canvas"), fxX = fxC.getContext("2d", { willReadFrequently: true });
@@ -1059,9 +1055,8 @@ const thermalLUT = (() => {
   return lut;
 })();
 
-function resetPortal(){ portalT = null; portalD = null; portalAmt = 0; bothFistSince = 0; pf.forEach(f => f.reset()); }
+function resetPortal(){ portalT = null; portalD = null; portalAmt = 0; for (const k in pinchState) delete pinchState[k]; pf.forEach(f => f.reset()); }
 function nextFilter(step = 1){ filterIdx = (filterIdx + step + FILTERS.length) % FILTERS.length; filterFlash = performance.now(); }
-function toggle3D(){ portal3D = !portal3D; lastToggle3D = performance.now(); filterFlash = performance.now(); }
 
 function renderFilter(bx, by, bw, bh){
   const scale = Math.min(1, 480 / bw), fw = Math.max(8, Math.round(bw * scale)), fh = Math.max(8, Math.round(bh * scale));
@@ -1141,17 +1136,16 @@ function renderFilter(bx, by, bw, bh){
   return { fw, fh };
 }
 
-// Corners in order: top-left, top-right, bottom-right, bottom-left.
-function portalCorners(L, R){
-  const p = (h, i) => ({ x: h.lm[i].x * W, y: h.lm[i].y * H });
-  if (portal3D){
-    // follows the tilt of each hand: fingertip (middle) on top, wrist on the bottom
-    return [p(L, 12), p(R, 12), p(R, 0), p(L, 0)];
-  }
-  const top = Math.min(L.lm[12].y, R.lm[12].y, L.lm[8].y, R.lm[8].y) * H;
-  const bot = Math.max(L.lm[0].y, R.lm[0].y) * H;
-  const lx = L.palm.x, rx = R.palm.x;
-  return [{ x: lx, y: top }, { x: rx, y: top }, { x: rx, y: bot }, { x: lx, y: bot }];
+/* Portal = bingkai dari 4 ujung jari: telunjuk & jempol tangan kiri + kanan.
+   Ganti filter = telunjuk ketemu jempol (pinch) di salah satu tangan. */
+function orderQuad(ps){
+  const c = { x: ps.reduce((s, p) => s + p.x, 0) / ps.length, y: ps.reduce((s, p) => s + p.y, 0) / ps.length };
+  return ps.map(p => ({ x: p.x, y: p.y, a: Math.atan2(p.y - c.y, p.x - c.x) })).sort((a, b) => a.a - b.a);
+}
+function polyArea(q){
+  let s = 0;
+  for (let i = 0; i < q.length; i++){ const a = q[i], b = q[(i + 1) % q.length]; s += a.x * b.y - b.x * a.y; }
+  return Math.abs(s) / 2;
 }
 
 function mode4(now, dt, fresh){
@@ -1159,29 +1153,23 @@ function mode4(now, dt, fresh){
     let open = false;
     if (hands.length >= 2){
       const two = [...hands].sort((a, b) => a.center.x - b.center.x).slice(0, 2);
-      // both fists held -> switch 2D/3D
-      if (two[0].fist && two[1].fist){
-        bothFistSince ||= now;
-        if (now - bothFistSince > 450 && now - lastToggle3D > 1200){ toggle3D(); bothFistSince = 0; }
-      } else bothFistSince = 0;
-      // thumb + pinky pinch -> next filter (rising edge only)
       for (const h of two){
-        const pinch = dist(h.lm[4], h.lm[20]) / (dist(h.lm[0], h.lm[9]) || 1) < 0.45;
-        if (pinch && !pinchState[h.side] && now - lastPinch > 650 && portalAmt > 0.5){ nextFilter(1); lastPinch = now; }
+        // pinch telunjuk + jempol, pakai hysteresis biar nggak kedip-kedip
+        const r = dist(h.lm[4], h.lm[8]) / (dist(h.lm[0], h.lm[9]) || 1);
+        const was = !!pinchState[h.side];
+        const pinch = was ? r < 0.42 : r < 0.24;
+        if (pinch && !was && now - lastPinch > 600 && portalAmt > 0.5){ nextFilter(1); lastPinch = now; }
         pinchState[h.side] = pinch; h.pinching = pinch;
       }
-      const [L, R] = two;
-      const spreadOk = (L.open || L.pinching) && (R.open || R.pinching) && (R.palm.x - L.palm.x) > W * 0.12;
-      if (spreadOk){
-        const t = now / 1000, raw = portalCorners(L, R);
-        if (!portalT) portalT = raw.map(c => ({ ...c }));
-        raw.forEach((c, i) => {
-          const owner = i === 0 || i === 3 ? L : R;
-          if (owner.pinching) return;               // keep that side still while pinching
-          portalT[i] = { x: pf[i * 2].f(c.x, t), y: pf[i * 2 + 1].f(c.y, t) };
-        });
-        open = true;
-      }
+      const t = now / 1000;
+      const src = [two[0].lm[8], two[0].lm[4], two[1].lm[8], two[1].lm[4]];
+      if (!portalT) portalT = src.map(p => ({ x: p.x * W, y: p.y * H }));
+      src.forEach((p, i) => {
+        if (two[i < 2 ? 0 : 1].pinching) return;      // kunci sudut tangan yang lagi pinch biar portal nggak penyok
+        portalT[i] = { x: pf[i * 2].f(p.x * W, t), y: pf[i * 2 + 1].f(p.y * H, t) };
+      });
+      const handsOk = two.every(h => h.idx || h.pinching);
+      open = handsOk && polyArea(orderQuad(portalT)) > W * H * 0.015;
     }
     if (open) portalSeen = now;
   }
@@ -1191,48 +1179,37 @@ function mode4(now, dt, fresh){
   if (was === 0 && portalAmt > 0) filterFlash = now;
   if (portalAmt <= 0){
     if (now - portalSeen >= 280){ portalT = null; portalD = null; pf.forEach(f => f.reset()); }
-    drawModeTag(now, null);
     return;
   }
-  // per-frame smoothing so the portal glides at 60fps even though tracking runs ~30fps
-  portalD = portalD ? portalD.map((c, i) => ({ x: approach(c.x, portalT[i].x, dt), y: approach(c.y, portalT[i].y, dt) })) : portalT.map(c => ({ ...c }));
+  // geser halus tiap frame (tracking ~30fps, layar 60fps)
+  portalD = portalD ? portalD.map((c, i) => ({ x: approach(c.x, portalT[i].x, dt, 24), y: approach(c.y, portalT[i].y, dt, 24) })) : portalT.map(c => ({ ...c }));
 
-  const c = { x: portalD.reduce((s, p) => s + p.x, 0) / 4, y: portalD.reduce((s, p) => s + p.y, 0) / 4 };
+  const q0 = orderQuad(portalD);
+  const c = { x: q0.reduce((s, p) => s + p.x, 0) / 4, y: q0.reduce((s, p) => s + p.y, 0) / 4 };
   const e = 1 - Math.pow(1 - portalAmt, 3);
-  const q = portalD.map(p => ({ x: c.x + (p.x - c.x) * e, y: c.y + (p.y - c.y) * e }));
+  const q = q0.map(p => ({ x: c.x + (p.x - c.x) * e, y: c.y + (p.y - c.y) * e }));
   const bx = Math.max(0, Math.floor(Math.min(...q.map(p => p.x)))), by = Math.max(0, Math.floor(Math.min(...q.map(p => p.y))));
   const ex = Math.min(W, Math.ceil(Math.max(...q.map(p => p.x)))), ey = Math.min(H, Math.ceil(Math.max(...q.map(p => p.y))));
   const bw = ex - bx, bh = ey - by;
   if (bw < 8 || bh < 8) return;
 
   const { fw, fh } = renderFilter(bx, by, bw, bh);
-  const path = (pts) => { ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath(); };
-  ctx.save(); path(q); ctx.clip();
+  const path = () => { ctx.beginPath(); q.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath(); };
+  ctx.save(); path(); ctx.clip();
   ctx.globalAlpha = Math.min(1, portalAmt * 1.3);
   ctx.drawImage(fxC, 0, 0, fw, fh, bx, by, bw, bh);
   ctx.restore();
 
   const hue = (now / 12) % 360;
   ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineJoin = "round";
-  if (portal3D){
-    // tunnel: frames receding into the portal for depth
-    ctx.save(); path(q); ctx.clip();
-    for (let k = 1; k <= 5; k++){
-      const s = Math.pow(0.8, k) * (1 + 0.04 * Math.sin(now / 300 + k));
-      const inner = q.map(p => ({ x: c.x + (p.x - c.x) * s, y: c.y + (p.y - c.y) * s }));
-      ctx.lineWidth = (5 - k * 0.7) * SC; ctx.strokeStyle = `hsla(${(hue + k * 30) % 360},100%,65%,${0.45 * portalAmt * (1 - k / 6)})`;
-      path(inner); ctx.stroke();
-    }
-    ctx.restore();
+  for (const [w, l, a] of [[16, 60, 0.12], [7, 65, 0.35], [2.5, 88, 1]]){
+    ctx.lineWidth = w * SC; ctx.strokeStyle = `hsla(${hue},100%,${l}%,${a * portalAmt})`; path(); ctx.stroke();
   }
-  for (const [w, l, a] of [[20, 60, 0.15], [9, 65, 0.4], [3, 85, 1]]){
-    ctx.lineWidth = w * SC; ctx.strokeStyle = `hsla(${hue},100%,${l}%,${a * portalAmt})`; path(q); ctx.stroke();
-  }
-  q.forEach((p, i) => glowDot(p, 24 * SC * portalAmt, i % 2 ? "92,225,255" : "255,79,216", portalAmt));
+  q.forEach((p, i) => glowDot(p, 18 * SC * portalAmt, i % 2 ? "92,225,255" : "255,79,216", portalAmt));
   ctx.restore();
-  if (Math.random() < 0.6 * portalAmt){
+  if (Math.random() < 0.4 * portalAmt){
     const i = (Math.random() * 4) | 0, a = q[i], b = q[(i + 1) % 4], t = Math.random();
-    addSpark(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, (Math.random() - 0.5) * 80 * SC, (Math.random() - 0.5) * 80 * SC, 0.5, (2 + Math.random() * 3) * SC, hue);
+    addSpark(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, (Math.random() - 0.5) * 70 * SC, (Math.random() - 0.5) * 70 * SC, 0.45, (2 + Math.random() * 2.5) * SC, hue);
   }
   drawModeTag(now, { x: c.x, y: by - 26 * SC, hue });
 }
@@ -1240,7 +1217,7 @@ function drawModeTag(now, at){
   const fk = (now - filterFlash) / 1300;
   if (fk >= 1) return;
   const pos = at || { x: W / 2, y: 60 * SC, hue: 160 };
-  label(`${FILTERS[filterIdx]} (${portal3D ? "3D" : "2D"})`, pos.x, pos.y, `hsl(${pos.hue},100%,78%)`, 1 - fk * fk);
+  label(FILTERS[filterIdx], pos.x, pos.y, `hsl(${pos.hue},100%,78%)`, 1 - fk * fk);
 }
 
 /* While vanishing/hidden: no new hand input, effects wind down on their own. */
@@ -1337,7 +1314,7 @@ addEventListener("keydown", e => {
   else if (["0", "1", "2", "3", "4"].includes(e.key)) setMode(+e.key);
   else if (e.key === "n" || e.key === "N") nextFilter(1);
   else if (e.key === "p" || e.key === "P") nextFilter(-1);
-  else if (e.key === "c" || e.key === "C"){ if (mode === 4) toggle3D(); else { strokes = []; curStroke = null; } }
+  else if (e.key === "c" || e.key === "C"){ strokes = []; curStroke = null; }
   else if (e.key === "h" || e.key === "H") document.body.classList.toggle("clean");
   else if (e.key === "f" || e.key === "F"){
     if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {});
