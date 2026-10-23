@@ -101,10 +101,10 @@
     <div class="modes">
       <label><input type="radio" name="mode" value="0" checked> Mati</label>
       <label><input type="radio" name="mode" value="1"> Mode 1 ☝️ Gambar di udara</label>
-      <label><input type="radio" name="mode" value="2"> Mode 2 ✌️ Petir di jari</label>
+      <label><input type="radio" name="mode" value="2"> Mode 2 ✌️ Segel neon</label>
       <label><input type="radio" name="mode" value="3"> Mode 3 🔮 Bola plasma</label>
       <label><input type="radio" name="mode" value="4"> Mode 4 🖼️ Portal filter</label>
-      <label><input type="radio" name="mode" value="5"> Mode 5 🛡️ Perisai hex</label>
+      <label><input type="radio" name="mode" value="5"> Mode 5 🌌 Celah dimensi</label>
     </div>
     <p class="note" id="modeNote"></p>
     <label class="check"><input type="checkbox" id="mirror" checked> Cerminin layar (biar gambar & tulisan kebaca)</label>
@@ -142,10 +142,10 @@ const volEl = $("#vol"), hfEl = $("#hf"), cool = $("#cool"), durEl = $("#dur"), 
 const MODE_NOTES = {
   0: "Belum ada mode aktif. Tahan ☝️ = Mode 1, ✌️ = Mode 2, 3 jari = Mode 3, 4 jari = Mode 4, 🤟 = Mode 5.",
   1: "☝️ Telunjuk buat gambar, kepal tangan buat ngebuyarin. Tahan 👎 buat matiin mode.",
-  2: "✌️ ke kamera buat petir. Tahan 👎 buat matiin mode.",
+  2: "Rapetin telunjuk + jari tengah, gambar lingkaran (1 atau 2 tangan) = segel kebentuk. Pisahin tangan, terus satuin kedua tangan = DUAR. Tahan 👎 buat matiin mode.",
   3: "🖐️ Buka telapak buat ngisi bola plasma, kepal tangan buat ledakin. Tahan 👎 buat matiin mode.",
   4: "Bikin bingkai pakai telunjuk & jempol kedua tangan buat buka portal. Telunjuk ketemu jempol = ganti filter. Tahan 👎 buat matiin mode.",
-  5: "🖐️ Buka telapak = perisai muncul (bisa 2 tangan). Gerakin cepet = perisai beriak. Kepal = perisai pecah. Tahan 👎 buat matiin mode."
+  5: "☝️ Gambar lingkaran pakai telunjuk = celah dimensi kebuka. Kepal tangan = celah nutup. Tahan 👎 buat matiin mode."
 };
 let mode = 0, modeFlash = null;
 function setMode(m, fromGesture = false){
@@ -155,7 +155,7 @@ function setMode(m, fromGesture = false){
   document.querySelectorAll('input[name=mode]').forEach(r => r.checked = +r.value === m);
   $("#modeNote").textContent = MODE_NOTES[m];
   strokes = []; curStroke = null; victory = []; glow = 0; tipVis = 0; drawing = false;
-  resetOrb(); resetPortal(); resetShields();
+  resetOrb(); resetPortal(); resetSeal(); resetRift();
   blockDrawUntil = performance.now() + 600;
   if (fromGesture && actHand){
     const c = actHand.center, hue = MODE_HUE[m];
@@ -915,7 +915,7 @@ function mode1(now, dt, fresh){
   } else if (tipVis <= 0) tipD = null;
 }
 
-/* ================= Mode 2: ✌️ lightning ================= */
+/* ---------- shared lightning helper ---------- */
 let victory = [], glow = 0, vtips = [], vtipsD = [];
 function bolt(a, b, spread){
   const segs = 9, dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
@@ -926,38 +926,6 @@ function bolt(a, b, spread){
   }
   ctx.lineTo(b.x, b.y); ctx.stroke();
 }
-function mode2(now, dt, fresh){
-  if (fresh){
-    victory = hands.filter(h => h.count === 2 || (h.name === "Victory" && h.score > 0.55))
-      .map(h => [h.lm[8], h.lm[12]].map(p => ({ x: p.x * W, y: p.y * H })));
-  }
-  if (victory.length){
-    glow = Math.min(1, glow + dt * 6); vtips = victory;
-    vtipsD = vtips.map((hh, i) => hh.map((p, j) => {
-      const o = vtipsD[i]?.[j];
-      return o ? { x: approach(o.x, p.x, dt, 26), y: approach(o.y, p.y, dt, 26) } : { ...p };
-    }));
-    vtips.forEach(hh => hh.forEach(p => {
-      for (let k = 0; k < 3; k++){
-        const a = Math.random() * Math.PI * 2, sp = (40 + Math.random() * 140) * SC;
-        addSpark(p.x, p.y, Math.cos(a) * sp, Math.sin(a) * sp - 60 * SC, 0.6 + Math.random() * 0.5, (3 + Math.random() * 5) * SC, Math.random() < 0.5 ? 310 : 190);
-      }
-    }));
-  } else glow = Math.max(0, glow - dt * 3);
-  if (glow <= 0) return;
-  ctx.save(); ctx.globalCompositeOperation = "lighter";
-  for (const [a, b] of (vtipsD.length ? vtipsD : vtips)){
-    glowDot(a, 55 * SC * glow, "255,79,216", glow);
-    glowDot(b, 55 * SC * glow, "92,225,255", glow);
-    ctx.lineCap = "round"; ctx.shadowBlur = 18; ctx.shadowColor = "#5ce1ff";
-    ctx.strokeStyle = `rgba(200,245,255,${glow})`; ctx.lineWidth = 3 * SC; bolt(a, b);
-    ctx.shadowColor = "#ff4fd8";
-    ctx.strokeStyle = `rgba(255,120,230,${0.8 * glow})`; ctx.lineWidth = 1.5 * SC; bolt(a, b);
-    ctx.shadowBlur = 0;
-  }
-  ctx.restore();
-}
-
 /* ================= Mode 3: 🔮 plasma orb (open palm charges, fist detonates) ================= */
 let orb = null;   // { x, y, charge, r, spin }
 const ox3 = new OneEuro(1.0, 0.01), oy3 = new OneEuro(1.0, 0.01);
@@ -1229,119 +1197,243 @@ function drawModeTag(now, at){
   label(FILTERS[filterIdx], pos.x, pos.y, `hsl(${pos.hue},100%,78%)`, 1 - fk * fk);
 }
 
-/* ================= Mode 5: 🛡️ Perisai Hex =================
-   Telapak kebuka -> perisai hexagon muncul di depan tangan (bisa 2 tangan)
-   Gerakin tangan cepet -> perisai beriak
-   Kepal tangan -> perisai pecah jadi serpihan */
-const shields = {};
-const shards = [];
-function resetShields(){ for (const k in shields) delete shields[k]; shards.length = 0; }
-function hexPath(cx, cy, r, rot = 0){
-  ctx.beginPath();
-  for (let i = 0; i < 6; i++){
-    const a = rot + i * Math.PI / 3;
-    i ? ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r) : ctx.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+/* ================= Shared: trace a circle with fingertips ================= */
+function detectCircle(pts){
+  if (pts.length < 18) return null;
+  let cx = 0, cy = 0;
+  for (const p of pts){ cx += p.x; cy += p.y; }
+  cx /= pts.length; cy /= pts.length;
+  let sum = 0, sum2 = 0;
+  const sectors = new Array(12).fill(0);
+  for (const p of pts){
+    const d = Math.hypot(p.x - cx, p.y - cy); sum += d; sum2 += d * d;
+    sectors[((Math.atan2(p.y - cy, p.x - cx) + Math.PI) / (Math.PI * 2) * 12 | 0) % 12] = 1;
   }
-  ctx.closePath();
+  const r = sum / pts.length, sd = Math.sqrt(Math.max(0, sum2 / pts.length - r * r));
+  if (r < 55 * SC || sd / r > 0.32) return null;
+  if (sectors.reduce((a, b) => a + b, 0) < 10) return null;
+  return { x: cx, y: cy, r };
 }
-function shatter(s){
-  shockwave(s.x, s.y, s.r * 0.6, 190);
-  const n = 26;
-  for (let i = 0; i < n; i++){
-    const a = Math.random() * Math.PI * 2, d = Math.random() * s.r * 0.8, sp = (180 + Math.random() * 420) * SC;
-    shards.push({ x: s.x + Math.cos(a) * d, y: s.y + Math.sin(a) * d, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-      rot: Math.random() * 6, vr: (Math.random() - 0.5) * 10, r: s.r * (0.08 + Math.random() * 0.08), life: 0.9 + Math.random() * 0.5, max: 1.4 });
-  }
-  for (let i = 0; i < 80; i++){
-    const a = Math.random() * Math.PI * 2, sp = (150 + Math.random() * 500) * SC;
-    addSpark(s.x, s.y, Math.cos(a) * sp, Math.sin(a) * sp, 0.5 + Math.random() * 0.6, (2 + Math.random() * 3) * SC, Math.random() < 0.7 ? 190 : 270);
-  }
-  s.amt = 0; s.broken = true;
-}
-function drawShards(dt){
-  if (!shards.length) return;
-  ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineJoin = "round";
-  for (let i = shards.length - 1; i >= 0; i--){
-    const p = shards[i];
-    p.life -= dt;
-    if (p.life <= 0){ shards[i] = shards[shards.length - 1]; shards.pop(); continue; }
-    const drag = Math.pow(0.15, dt);
-    p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= drag; p.vy = p.vy * drag + 120 * SC * dt; p.rot += p.vr * dt;
-    const a = Math.min(1, p.life / p.max * 1.5);
-    hexPath(p.x, p.y, p.r, p.rot);
-    ctx.fillStyle = `rgba(92,225,255,${0.18 * a})`; ctx.fill();
-    ctx.lineWidth = 2 * SC; ctx.strokeStyle = `rgba(170,240,255,${0.9 * a})`; ctx.stroke();
+function pruneTrace(tr, now, keep = 1800){ while (tr.length && now - tr[0].t > keep) tr.shift(); }
+function drawTrace(tr, now, hueA, hueB){
+  if (tr.length < 2) return;
+  ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
+  for (let i = 1; i < tr.length; i++){
+    const a = tr[i - 1], b = tr[i];
+    if (a.id !== b.id) continue;
+    const life = 1 - (now - b.t) / 1800;
+    if (life <= 0) continue;
+    ctx.strokeStyle = `hsla(${a.id ? hueB : hueA},100%,70%,${0.85 * life})`;
+    ctx.lineWidth = 5 * SC * life;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
   }
   ctx.restore();
 }
-function drawShield(s, now){
-  const r = s.r, a = s.amt;
-  if (r < 4 || a <= 0) return;
-  ctx.save();
-  ctx.globalCompositeOperation = "lighter";
-  // soft energy disc
-  const g = ctx.createRadialGradient(s.x, s.y, r * 0.2, s.x, s.y, r);
-  g.addColorStop(0, `rgba(92,225,255,${0.05 * a})`);
-  g.addColorStop(0.8, `rgba(120,140,255,${0.14 * a})`);
-  g.addColorStop(1, `rgba(170,110,255,${0.32 * a})`);
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.fill();
 
-  // honeycomb grid, revealed from the centre outward as it powers up
-  ctx.save(); ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.clip();
-  const hs = r / 4.2, w = Math.sqrt(3) * hs, rows = Math.ceil(r / (hs * 1.5)) + 1, cols = Math.ceil(r / w) + 1;
-  ctx.lineWidth = 1.6 * SC;
-  for (let row = -rows; row <= rows; row++){
-    for (let col = -cols; col <= cols; col++){
-      const cx = s.x + col * w + (row & 1 ? w / 2 : 0), cy = s.y + row * hs * 1.5;
-      const d = Math.hypot(cx - s.x, cy - s.y) / r;
-      if (d > 1.05 || d > a * 1.25) continue;
-      let glowV = 0.22 + 0.5 * Math.max(0, Math.sin(d * 9 - now / 160 + s.seed));
-      for (const rp of s.ripples){ const k = rp.t / 0.7; glowV += Math.max(0, 1 - Math.abs(d - k * 1.2) * 6) * (1 - k); }
-      hexPath(cx, cy, hs * 0.92, Math.PI / 6);
-      ctx.strokeStyle = `rgba(140,230,255,${Math.min(1, glowV) * a})`; ctx.stroke();
-      if (glowV > 0.6){ ctx.fillStyle = `rgba(92,225,255,${(glowV - 0.6) * 0.25 * a})`; ctx.fill(); }
+/* ================= Mode 2: ✌️ Segel Neon =================
+   Rapetin telunjuk + jari tengah (kedua tangan), gambar lingkaran -> segel kebentuk.
+   Pisahin tangan, terus satuin kedua tangan -> segel menyusut & meledak. */
+let sealTrace = [], seal = null;
+const swordF = {};
+function resetSeal(){ sealTrace = []; seal = null; for (const k in swordF) delete swordF[k]; }
+function isSword(h){ return h.idx && h.mid && !h.ring && !h.pink && dist(h.lm[8], h.lm[12]) / (dist(h.lm[0], h.lm[9]) || 1) < 0.38; }
+function swordTip(h){ return { x: (h.lm[8].x + h.lm[12].x) / 2 * W, y: (h.lm[8].y + h.lm[12].y) / 2 * H }; }
+
+function drawSeal(s, now){
+  const R = s.r * s.scale, build = s.build, a = s.alpha;
+  if (R < 3 || a <= 0) return;
+  const x = s.x, y = s.y + Math.sin(now / 700) * 4 * SC;
+  const rotA = now / 2200, rotB = -now / 1500;
+  const ring = (rr, i) => Math.max(0, Math.min(1, (build - i * 0.15) / 0.5));
+  ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round";
+  glowDot({ x, y }, R * 1.25, "255,79,216", 0.18 * a);
+  // concentric rings, drawn on progressively
+  const radii = [1, 0.84, 0.56, 0.3];
+  radii.forEach((k, i) => {
+    const p = ring(k, i); if (!p) return;
+    const start = (i % 2 ? rotB : rotA) * 2;
+    ctx.strokeStyle = `hsla(${i % 2 ? 190 : 315},100%,${i ? 68 : 75}%,${0.9 * a})`;
+    ctx.lineWidth = (i ? 2 : 3.5) * SC;
+    ctx.beginPath(); ctx.arc(x, y, R * k, start, start + Math.PI * 2 * p); ctx.stroke();
+  });
+  // segmented outer band
+  if (build > 0.5){
+    ctx.setLineDash([R * 0.05, R * 0.035]); ctx.lineDashOffset = -now / 30;
+    ctx.lineWidth = 6 * SC; ctx.strokeStyle = `hsla(200,100%,70%,${0.45 * a * Math.min(1, (build - 0.5) * 2)})`;
+    ctx.beginPath(); ctx.arc(x, y, R * 0.92, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  }
+  // circuit traces: out from the inner ring, a right-angle bend, then a node
+  const traces = 16, tp = Math.max(0, Math.min(1, (build - 0.35) / 0.5));
+  for (let i = 0; i < traces && tp > 0; i++){
+    const ang = rotA + i * Math.PI * 2 / traces, bend = (i % 2 ? 0.13 : -0.13) * tp;
+    const p0 = { x: x + Math.cos(ang) * R * 0.56, y: y + Math.sin(ang) * R * 0.56 };
+    const p1 = { x: x + Math.cos(ang) * R * 0.66, y: y + Math.sin(ang) * R * 0.66 };
+    const p2 = { x: x + Math.cos(ang + bend) * R * 0.66, y: y + Math.sin(ang + bend) * R * 0.66 };
+    const p3 = { x: x + Math.cos(ang + bend) * R * (0.66 + 0.16 * tp), y: y + Math.sin(ang + bend) * R * (0.66 + 0.16 * tp) };
+    const hue = i % 2 ? 190 : 315, pulse = 0.55 + 0.45 * Math.sin(now / 180 + i);
+    ctx.strokeStyle = `hsla(${hue},100%,70%,${0.85 * a})`; ctx.lineWidth = 1.8 * SC;
+    ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y);
+    ctx.arc(x, y, R * 0.66, ang, ang + bend, bend < 0); ctx.lineTo(p3.x, p3.y); ctx.stroke();
+    ctx.fillStyle = `hsla(${hue},100%,80%,${pulse * a})`;
+    ctx.beginPath(); ctx.arc(p3.x, p3.y, 3.2 * SC, 0, Math.PI * 2); ctx.fill();
+  }
+  // orbiting chips on the inner ring + core
+  for (let i = 0; i < 8 && build > 0.6; i++){
+    const ang = rotB * 1.5 + i * Math.PI / 4, cx = x + Math.cos(ang) * R * 0.3, cy = y + Math.sin(ang) * R * 0.3;
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(ang);
+    ctx.strokeStyle = `hsla(${i % 2 ? 315 : 190},100%,75%,${0.8 * a})`; ctx.lineWidth = 1.5 * SC;
+    ctx.strokeRect(-4 * SC, -4 * SC, 8 * SC, 8 * SC); ctx.restore();
+  }
+  glowDot({ x, y }, R * 0.22 * (0.9 + 0.1 * Math.sin(now / 120)), "255,150,240", a * Math.min(1, build));
+  // crackle
+  if (Math.random() < 0.25 * a){
+    const ang = Math.random() * Math.PI * 2;
+    ctx.strokeStyle = `rgba(210,250,255,${0.8 * a})`; ctx.lineWidth = 1.4 * SC;
+    bolt({ x: x + Math.cos(ang) * R * 0.3, y: y + Math.sin(ang) * R * 0.3 }, { x: x + Math.cos(ang) * R, y: y + Math.sin(ang) * R }, R * 0.12);
+  }
+  ctx.restore();
+}
+function blowSeal(){
+  if (!seal) return;
+  const { x, y } = seal, R = seal.r;
+  shockwave(x, y, R * 0.5, 315);
+  setTimeout(() => shockwave(x, y, R * 0.35, 190), 110);
+  setTimeout(() => shockwave(x, y, R * 0.25, 270), 220);
+  for (let i = 0; i < 320; i++){
+    const a = Math.random() * Math.PI * 2, sp = (250 + Math.random() * 800) * SC;
+    addSpark(x, y, Math.cos(a) * sp, Math.sin(a) * sp, 0.6 + Math.random() * 1, (2.5 + Math.random() * 5) * SC, Math.random() < 0.5 ? 315 : 190);
+  }
+  seal = null; sealTrace = [];
+}
+function mode2(now, dt, fresh){
+  const live = state === "visible";
+  if (fresh && live){
+    const swords = [];
+    for (const h of hands){
+      const ok = isSword(h);
+      swordF[h.side] = ok ? (swordF[h.side] || 0) + 1 : 0;
+      if (swordF[h.side] >= 2) swords.push(h);
+    }
+    if (!seal || seal.state === "fade"){
+      swords.forEach((h, i) => {
+        const p = swordTip(h), last = [...sealTrace].reverse().find(q => q.id === (h.side === "Left" ? 0 : 1));
+        if (!last || dist(last, p) > 3 * SC) sealTrace.push({ ...p, t: now, id: h.side === "Left" ? 0 : 1 });
+      });
+      const c = detectCircle(sealTrace);
+      if (c){ seal = { ...c, build: 0, scale: 1, alpha: 1, state: "build", born: now, armed: false }; sealTrace = []; }
+    } else if (seal.state === "idle" && hands.length >= 2){
+      const two = hands.slice(0, 2), gap = dist(two[0].tip, two[1].tip), hs = (two[0].size + two[1].size) / 2;
+      if (gap > hs * 2) seal.armed = true;
+      if (seal.armed && gap < hs * 0.9){ seal.state = "collapse"; seal.t0 = now; }
     }
   }
-  ctx.restore();
+  pruneTrace(sealTrace, now);
+  drawTrace(sealTrace, now, 315, 190);
+  for (const h of hands) if (swordF[h.side] >= 2 && live){
+    ctx.save(); ctx.globalCompositeOperation = "lighter"; glowDot(swordTip(h), 26 * SC, "255,79,216", 0.9); ctx.restore();
+  }
+  if (!seal) return;
+  if (!live && seal.state !== "collapse") seal.state = "fade";
+  if (seal.state === "build"){ seal.build = Math.min(1.2, seal.build + dt * 1.4); if (seal.build >= 1.2) seal.state = "idle"; }
+  if (seal.state === "idle" && now - seal.born > 15000) seal.state = "fade";
+  if (seal.state === "collapse"){
+    const k = Math.min(1, (now - seal.t0) / 350);
+    seal.scale = 1 - 0.85 * k * k; seal.alpha = 1 + k;
+    if (k >= 1){ blowSeal(); return; }
+  }
+  if (seal.state === "fade"){ seal.alpha -= dt * 2; if (seal.alpha <= 0){ seal = null; return; } }
+  drawSeal(seal, now);
+}
 
-  // rim: solid ring + slow segmented ring
-  ctx.lineWidth = 4 * SC; ctx.strokeStyle = `rgba(150,235,255,${0.85 * a})`;
-  ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.stroke();
-  ctx.lineWidth = 12 * SC; ctx.strokeStyle = `rgba(170,110,255,${0.18 * a})`;
-  ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.stroke();
-  ctx.setLineDash([r * 0.18, r * 0.1]); ctx.lineDashOffset = -now / 25;
-  ctx.lineWidth = 2 * SC; ctx.strokeStyle = `rgba(200,170,255,${0.7 * a})`;
-  ctx.beginPath(); ctx.arc(s.x, s.y, r * 1.08, 0, Math.PI * 2); ctx.stroke();
-  ctx.setLineDash([]);
+/* ================= Mode 5: 🌌 Celah Dimensi =================
+   Gambar lingkaran pakai telunjuk -> udara robek, kebuka celah berisi galaksi.
+   Kepal tangan -> celah nutup. */
+let riftTrace = [], rift = null;
+function resetRift(){ riftTrace = []; rift = null; }
+function makeRift(c){
+  const stars = [];
+  for (let i = 0; i < 360; i++){
+    const rr = Math.pow(Math.random(), 0.7), arm = (i % 2) * Math.PI;
+    stars.push({ rr, th: arm + rr * 5 + (Math.random() - 0.5) * 0.9, s: (0.8 + Math.random() * 2.2), hue: [200, 280, 320, 50][i % 4], tw: Math.random() * 6 });
+  }
+  const edge = Array.from({ length: 56 }, () => ({ base: 0.88 + Math.random() * 0.22, ph: Math.random() * 6 }));
+  return { ...c, amt: 0, closing: false, stars, edge, born: performance.now() };
+}
+function riftShape(r, now){
+  const pts = [], n = r.edge.length, R = r.r * (1 - Math.pow(1 - r.amt, 3));
+  for (let i = 0; i < n; i++){
+    const e = r.edge[i], ang = i / n * Math.PI * 2;
+    const k = e.base + Math.sin(now / 500 + e.ph) * 0.03 + (Math.random() - 0.5) * 0.02;
+    pts.push({ x: r.x + Math.cos(ang) * R * k, y: r.y + Math.sin(ang) * R * k });
+  }
+  return pts;
+}
+function drawRift(r, now){
+  if (r.amt <= 0.01) return;
+  const pts = riftShape(r, now), R = r.r * r.amt;
+  const path = () => { ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath(); };
+  // inside: deep space
+  ctx.save(); path(); ctx.clip();
+  ctx.fillStyle = "#05010f"; ctx.fillRect(r.x - R * 1.3, r.y - R * 1.3, R * 2.6, R * 2.6);
+  ctx.globalCompositeOperation = "lighter";
+  const neb = (ox, oy, rad, rgb, al) => {
+    const g = ctx.createRadialGradient(ox, oy, 0, ox, oy, rad);
+    g.addColorStop(0, `rgba(${rgb},${al})`); g.addColorStop(1, `rgba(${rgb},0)`);
+    ctx.fillStyle = g; ctx.fillRect(ox - rad, oy - rad, rad * 2, rad * 2);
+  };
+  const sw = now / 4000;
+  neb(r.x, r.y, R * 0.5, "255,210,255", 0.55);
+  neb(r.x + Math.cos(sw) * R * 0.35, r.y + Math.sin(sw) * R * 0.35, R * 0.7, "150,60,255", 0.35);
+  neb(r.x + Math.cos(sw + 3) * R * 0.4, r.y + Math.sin(sw + 3) * R * 0.4, R * 0.6, "40,200,255", 0.25);
+  for (const st of r.stars){
+    const th = st.th + now * 0.00035 / (0.25 + st.rr);
+    const px = r.x + Math.cos(th) * st.rr * R, py = r.y + Math.sin(th) * st.rr * R * 0.92;
+    const tw = 0.55 + 0.45 * Math.sin(now / 250 + st.tw);
+    ctx.fillStyle = `hsla(${st.hue},100%,85%,${tw})`;
+    ctx.fillRect(px, py, st.s * SC, st.s * SC);
+  }
+  ctx.restore();
+  // torn, glowing edge
+  ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineJoin = "round";
+  for (const [w, c, al] of [[16, "150,60,255", 0.22], [7, "200,120,255", 0.55], [2, "245,225,255", 0.95]]){
+    ctx.lineWidth = w * SC; ctx.strokeStyle = `rgba(${c},${al * Math.min(1, r.amt * 1.5)})`; path(); ctx.stroke();
+  }
+  if (Math.random() < 0.35){
+    const p = pts[(Math.random() * pts.length) | 0], ang = Math.atan2(p.y - r.y, p.x - r.x), len = R * (0.15 + Math.random() * 0.2);
+    ctx.strokeStyle = "rgba(215,170,255,0.85)"; ctx.lineWidth = 1.5 * SC;
+    bolt(p, { x: p.x + Math.cos(ang) * len, y: p.y + Math.sin(ang) * len }, len * 0.4);
+  }
   ctx.restore();
 }
 function mode5(now, dt, fresh){
-  if (fresh){
-    for (const h of hands){
-      const s = (shields[h.side] ??= { x: h.palm.x, y: h.palm.y, tx: h.palm.x, ty: h.palm.y, r: 0, tr: 0, amt: 0, held: 0, fist: 0,
-        px: h.palm.x, py: h.palm.y, ripples: [], seed: Math.random() * 6, broken: false });
-      if (h.open){
-        if (s.broken && now - s.held > 250) s.broken = false;
-        s.tx = h.palm.x; s.ty = h.palm.y; s.tr = h.size * 1.35; s.held = now; s.fist = 0;
-        const v = Math.hypot(s.tx - s.px, s.ty - s.py);
-        if (v > h.size * 0.18 && s.amt > 0.6 && s.ripples.length < 3) s.ripples.push({ t: 0 });
-        s.px = s.tx; s.py = s.ty;
-      } else if (h.fist && s.amt > 0.5 && !s.broken){
-        if (++s.fist >= 2) shatter(s);
+  const live = state === "visible";
+  if (fresh && live){
+    if (!rift){
+      for (const h of hands){
+        if (h.count !== 1) continue;
+        const id = h.side === "Left" ? 0 : 1, last = [...riftTrace].reverse().find(q => q.id === id);
+        if (!last || dist(last, h.tip) > 3 * SC) riftTrace.push({ ...h.tip, t: now, id });
       }
+      const c = detectCircle(riftTrace);
+      if (c){ rift = makeRift(c); riftTrace = []; shockwave(c.x, c.y, c.r * 0.4, 275); }
+    } else if (!rift.closing && hands.some(h => h.fist)){
+      rift.fistF = (rift.fistF || 0) + 1;
+      if (rift.fistF >= 2) rift.closing = true;
+    } else if (!hands.some(h => h.fist) && rift) rift.fistF = 0;
+  }
+  pruneTrace(riftTrace, now);
+  drawTrace(riftTrace, now, 275, 200);
+  if (!rift) return;
+  if (!live) rift.closing = true;
+  if (rift.closing){
+    rift.amt -= dt * 2.2;
+    if (Math.random() < 0.9){
+      const a = Math.random() * Math.PI * 2, d = rift.r * rift.amt;
+      addSpark(rift.x + Math.cos(a) * d, rift.y + Math.sin(a) * d, -Math.cos(a) * 200 * SC, -Math.sin(a) * 200 * SC, 0.35, 2.5 * SC, 280);
     }
-  }
-  for (const k in shields){
-    const s = shields[k];
-    const alive = !s.broken && now - s.held < 250;
-    s.amt = alive ? Math.min(1, s.amt + dt * 3.2) : Math.max(0, s.amt - dt * 3);
-    s.x = approach(s.x, s.tx, dt, 20); s.y = approach(s.y, s.ty, dt, 20);
-    s.r = approach(s.r, s.tr * (0.55 + 0.45 * (1 - Math.pow(1 - s.amt, 3))), dt, 14);
-    for (const rp of s.ripples) rp.t += dt;
-    s.ripples = s.ripples.filter(rp => rp.t < 0.7);
-    if (s.amt <= 0 && !alive && now - s.held > 1500){ delete shields[k]; continue; }
-    drawShield(s, now);
-  }
+    if (rift.amt <= 0){ rift = null; return; }
+  } else rift.amt = Math.min(1, rift.amt + dt * 1.6);
+  drawRift(rift, now);
 }
 
 /* While vanishing/hidden: no new hand input, effects wind down on their own. */
@@ -1352,7 +1444,7 @@ function handEffectsIdle(now, dt){
   else if (mode === 3) mode3(now, dt, false);
   else if (mode === 4) mode4(now, dt, false);
   else if (mode === 5) mode5(now, dt, false);
-  drawShards(dt);
+
   drawBursts(dt);
   drawWaves(dt);
   drawActivation(now);
@@ -1364,7 +1456,7 @@ function clearHandState(){
   for (const k in fingerHist) delete fingerHist[k];
   actCand = 0; actProg = 0; actHand = null; modeFlash = null;
   strokes = []; curStroke = null; drawing = false; tip = null; tipD = null; tipVis = 0; vtipsD = []; fistFrames = 0;
-  resetOrb(); resetPortal(); for (const k in shields) delete shields[k];
+  resetOrb(); resetPortal(); resetSeal(); resetRift();
   lastVT = -1;
   blockDrawUntil = performance.now() + 800;
 }
@@ -1378,7 +1470,7 @@ function handEffects(now, dt){
   else if (mode === 3) mode3(now, dt, fresh);
   else if (mode === 4) mode4(now, dt, fresh);
   else if (mode === 5) mode5(now, dt, fresh);
-  drawShards(dt);
+
   drawBursts(dt);
   drawWaves(dt);
   drawActivation(now);
