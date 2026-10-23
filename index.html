@@ -101,7 +101,7 @@
     <div class="modes">
       <label><input type="radio" name="mode" value="0" checked> Mati</label>
       <label><input type="radio" name="mode" value="1"> Mode 1 ☝️ Gambar di udara</label>
-      <label><input type="radio" name="mode" value="2"> Mode 2 ✌️ Segel neon</label>
+      <label><input type="radio" name="mode" value="2"> Mode 2 ✌️ Petir & segel neon</label>
       <label><input type="radio" name="mode" value="3"> Mode 3 🔮 Bola plasma</label>
       <label><input type="radio" name="mode" value="4"> Mode 4 🖼️ Portal filter</label>
       <label><input type="radio" name="mode" value="5"> Mode 5 🌌 Celah dimensi</label>
@@ -142,10 +142,10 @@ const volEl = $("#vol"), hfEl = $("#hf"), cool = $("#cool"), durEl = $("#dur"), 
 const MODE_NOTES = {
   0: "Belum ada mode aktif. Tahan ☝️ = Mode 1, ✌️ = Mode 2, 3 jari = Mode 3, 4 jari = Mode 4, 🤟 = Mode 5.",
   1: "☝️ Telunjuk buat gambar, kepal tangan buat ngebuyarin. Tahan 👎 buat matiin mode.",
-  2: "Rapetin telunjuk + jari tengah, gambar lingkaran (1 atau 2 tangan) = segel kebentuk. Pisahin tangan, terus satuin kedua tangan = DUAR. Tahan 👎 buat matiin mode.",
+  2: "✌️ renggang = petir di jari. Rapetin telunjuk + jari tengah, gambar lingkaran = segel kebentuk. Pisahin tangan, satuin lagi = DUAR. Tahan 👎 buat matiin mode.",
   3: "🖐️ Buka telapak buat ngisi bola plasma, kepal tangan buat ledakin. Tahan 👎 buat matiin mode.",
   4: "Bikin bingkai pakai telunjuk & jempol kedua tangan buat buka portal. Telunjuk ketemu jempol = ganti filter. Tahan 👎 buat matiin mode.",
-  5: "☝️ Gambar lingkaran pakai telunjuk = celah dimensi kebuka. Kepal tangan = celah nutup. Tahan 👎 buat matiin mode."
+  5: "☝️ Puter-puter telunjuk (±2-3 putaran pelan) sampai cincin listrik penuh = celah dimensi kebuka. Kepal tangan = celah nutup. Tahan 👎 buat matiin mode."
 };
 let mode = 0, modeFlash = null;
 function setMode(m, fromGesture = false){
@@ -1305,8 +1305,41 @@ function blowSeal(){
   }
   seal = null; sealTrace = [];
 }
+function lightning2(now, dt, fresh){
+  if (fresh){
+    victory = hands.filter(h => (h.count === 2 || (h.name === "Victory" && h.score > 0.55)) && !isSword(h))
+      .map(h => [h.lm[8], h.lm[12]].map(p => ({ x: p.x * W, y: p.y * H })));
+  }
+  if (victory.length){
+    glow = Math.min(1, glow + dt * 6); vtips = victory;
+    vtipsD = vtips.map((hh, i) => hh.map((p, j) => {
+      const o = vtipsD[i]?.[j];
+      return o ? { x: approach(o.x, p.x, dt, 26), y: approach(o.y, p.y, dt, 26) } : { ...p };
+    }));
+    vtips.forEach(hh => hh.forEach(p => {
+      for (let k = 0; k < 3; k++){
+        const a = Math.random() * Math.PI * 2, sp = (40 + Math.random() * 140) * SC;
+        addSpark(p.x, p.y, Math.cos(a) * sp, Math.sin(a) * sp - 60 * SC, 0.6 + Math.random() * 0.5, (3 + Math.random() * 5) * SC, Math.random() < 0.5 ? 310 : 190);
+      }
+    }));
+  } else glow = Math.max(0, glow - dt * 3);
+  if (glow <= 0) return;
+  ctx.save(); ctx.globalCompositeOperation = "lighter";
+  for (const [a, b] of (vtipsD.length ? vtipsD : vtips)){
+    glowDot(a, 55 * SC * glow, "255,79,216", glow);
+    glowDot(b, 55 * SC * glow, "92,225,255", glow);
+    ctx.lineCap = "round"; ctx.shadowBlur = 18; ctx.shadowColor = "#5ce1ff";
+    ctx.strokeStyle = `rgba(200,245,255,${glow})`; ctx.lineWidth = 3 * SC; bolt(a, b);
+    ctx.shadowColor = "#ff4fd8";
+    ctx.strokeStyle = `rgba(255,120,230,${0.8 * glow})`; ctx.lineWidth = 1.5 * SC; bolt(a, b);
+    ctx.shadowBlur = 0;
+  }
+  ctx.restore();
+}
+
 function mode2(now, dt, fresh){
   const live = state === "visible";
+  lightning2(now, dt, fresh && live);
   if (fresh && live){
     const swords = [];
     for (const h of hands){
@@ -1346,10 +1379,11 @@ function mode2(now, dt, fresh){
 }
 
 /* ================= Mode 5: 🌌 Celah Dimensi =================
-   Gambar lingkaran pakai telunjuk -> udara robek, kebuka celah berisi galaksi.
+   Puter-puter telunjuk beberapa kali -> cincin listrik ngisi tenaga -> celah kebuka.
    Kepal tangan -> celah nutup. */
-let riftTrace = [], rift = null;
-function resetRift(){ riftTrace = []; rift = null; }
+const SPIN_TURNS = 2.2;
+let rift = null, spin = null;
+function resetRift(){ rift = null; spin = null; }
 function makeRift(c){
   const stars = [];
   for (let i = 0; i < 360; i++){
@@ -1357,7 +1391,7 @@ function makeRift(c){
     stars.push({ rr, th: arm + rr * 5 + (Math.random() - 0.5) * 0.9, s: (0.8 + Math.random() * 2.2), hue: [200, 280, 320, 50][i % 4], tw: Math.random() * 6 });
   }
   const edge = Array.from({ length: 56 }, () => ({ base: 0.88 + Math.random() * 0.22, ph: Math.random() * 6 }));
-  return { ...c, amt: 0, closing: false, stars, edge, born: performance.now() };
+  return { ...c, amt: 0, closing: false, stars, edge, fistF: 0 };
 }
 function riftShape(r, now){
   const pts = [], n = r.edge.length, R = r.r * (1 - Math.pow(1 - r.amt, 3));
@@ -1372,7 +1406,6 @@ function drawRift(r, now){
   if (r.amt <= 0.01) return;
   const pts = riftShape(r, now), R = r.r * r.amt;
   const path = () => { ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath(); };
-  // inside: deep space
   ctx.save(); path(); ctx.clip();
   ctx.fillStyle = "#05010f"; ctx.fillRect(r.x - R * 1.3, r.y - R * 1.3, R * 2.6, R * 2.6);
   ctx.globalCompositeOperation = "lighter";
@@ -1388,12 +1421,10 @@ function drawRift(r, now){
   for (const st of r.stars){
     const th = st.th + now * 0.00035 / (0.25 + st.rr);
     const px = r.x + Math.cos(th) * st.rr * R, py = r.y + Math.sin(th) * st.rr * R * 0.92;
-    const tw = 0.55 + 0.45 * Math.sin(now / 250 + st.tw);
-    ctx.fillStyle = `hsla(${st.hue},100%,85%,${tw})`;
+    ctx.fillStyle = `hsla(${st.hue},100%,85%,${0.55 + 0.45 * Math.sin(now / 250 + st.tw)})`;
     ctx.fillRect(px, py, st.s * SC, st.s * SC);
   }
   ctx.restore();
-  // torn, glowing edge
   ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineJoin = "round";
   for (const [w, c, al] of [[16, "150,60,255", 0.22], [7, "200,120,255", 0.55], [2, "245,225,255", 0.95]]){
     ctx.lineWidth = w * SC; ctx.strokeStyle = `rgba(${c},${al * Math.min(1, r.amt * 1.5)})`; path(); ctx.stroke();
@@ -1405,30 +1436,89 @@ function drawRift(r, now){
   }
   ctx.restore();
 }
+/* Spin charge: count how far the fingertip has turned around the centre of its recent path. */
+function spinUpdate(p, now){
+  if (!spin) spin = { pts: [], turned: 0, last: null, cx: p.x, cy: p.y, r: 0, seen: now };
+  spin.pts.push({ x: p.x, y: p.y, t: now });
+  while (spin.pts.length && now - spin.pts[0].t > 1400) spin.pts.shift();
+  let cx = 0, cy = 0; for (const q of spin.pts){ cx += q.x; cy += q.y; } cx /= spin.pts.length; cy /= spin.pts.length;
+  let r = 0; for (const q of spin.pts) r += Math.hypot(q.x - cx, q.y - cy); r /= spin.pts.length;
+  spin.cx = approach(spin.cx, cx, 1 / 30, 8); spin.cy = approach(spin.cy, cy, 1 / 30, 8); spin.r = r; spin.seen = now;
+  const a = Math.atan2(p.y - spin.cy, p.x - spin.cx);
+  if (spin.last !== null && r > 35 * SC){
+    let d = a - spin.last;
+    if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2;
+    // keep turning the same way; tiny jitter is ignored, only a real reverse bleeds charge
+    if (Math.abs(d) < 0.015) {}
+    else if (spin.turned === 0 || Math.sign(d) === Math.sign(spin.turned)) spin.turned += d;
+    else if (Math.abs(d) > 0.12) spin.turned *= 0.8;
+  }
+  spin.last = a;
+}
+function drawChargeRing(now){
+  const ch = Math.min(1, Math.abs(spin.turned) / (Math.PI * 2 * SPIN_TURNS));
+  if (ch <= 0.02) return ch;
+  const R = Math.max(40 * SC, spin.r), cx = spin.cx, cy = spin.cy, dir = Math.sign(spin.turned) || 1;
+  ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  glowDot({ x: cx, y: cy }, R * 1.2, "150,60,255", 0.18 * ch);
+  // the ring builds up around the circle as charge grows
+  const span = Math.PI * 2 * Math.min(1, ch * 1.15), start = -now / 400 * dir;
+  const seg = 40, pts = [];
+  for (let i = 0; i <= seg; i++){
+    const ang = start + span * i / seg * dir, jit = (Math.random() - 0.5) * R * 0.08 * (0.4 + ch);
+    pts.push({ x: cx + Math.cos(ang) * (R + jit), y: cy + Math.sin(ang) * (R + jit) });
+  }
+  for (const [w, c, al] of [[14, "150,60,255", 0.25], [5, "190,140,255", 0.6], [1.8, "240,230,255", 1]]){
+    ctx.lineWidth = w * SC * (0.5 + ch * 0.5); ctx.strokeStyle = `rgba(${c},${al * ch})`;
+    ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.stroke();
+  }
+  // arcs jumping across and off the ring, more of them as it charges
+  const arcs = Math.round(1 + ch * 4);
+  for (let i = 0; i < arcs; i++){
+    const a1 = Math.random() * Math.PI * 2, a2 = a1 + (Math.random() - 0.5) * 1.6;
+    ctx.strokeStyle = `rgba(${i % 2 ? "92,225,255" : "220,170,255"},${0.75 * ch})`; ctx.lineWidth = 1.4 * SC;
+    bolt({ x: cx + Math.cos(a1) * R, y: cy + Math.sin(a1) * R }, { x: cx + Math.cos(a2) * R * (0.7 + Math.random() * 0.6), y: cy + Math.sin(a2) * R * (0.7 + Math.random() * 0.6) }, R * 0.12);
+  }
+  const head = pts[pts.length - 1];
+  glowDot(head, 22 * SC, "220,170,255", ch);
+  ctx.restore();
+  if (Math.random() < 0.5 * ch){
+    const a = Math.random() * Math.PI * 2;
+    addSpark(cx + Math.cos(a) * R, cy + Math.sin(a) * R, -Math.sin(a) * 160 * SC * dir, Math.cos(a) * 160 * SC * dir, 0.35, 2 * SC, Math.random() < 0.6 ? 275 : 195);
+  }
+  return ch;
+}
 function mode5(now, dt, fresh){
   const live = state === "visible";
   if (fresh && live){
     if (!rift){
-      for (const h of hands){
-        if (h.count !== 1) continue;
-        const id = h.side === "Left" ? 0 : 1, last = [...riftTrace].reverse().find(q => q.id === id);
-        if (!last || dist(last, h.tip) > 3 * SC) riftTrace.push({ ...h.tip, t: now, id });
-      }
-      const c = detectCircle(riftTrace);
-      if (c){ rift = makeRift(c); riftTrace = []; shockwave(c.x, c.y, c.r * 0.4, 275); }
+      const h = hands.find(x => x.count === 1);
+      if (h) spinUpdate(h.tip, now);
     } else if (!rift.closing && hands.some(h => h.fist)){
-      rift.fistF = (rift.fistF || 0) + 1;
-      if (rift.fistF >= 2) rift.closing = true;
-    } else if (!hands.some(h => h.fist) && rift) rift.fistF = 0;
+      if (++rift.fistF >= 2) rift.closing = true;
+    } else if (rift && !hands.some(h => h.fist)) rift.fistF = 0;
   }
-  pruneTrace(riftTrace, now);
-  drawTrace(riftTrace, now, 275, 200);
+  if (spin && !rift){
+    if (!live || now - spin.seen > 400){ spin.turned *= Math.exp(-dt * 4); if (Math.abs(spin.turned) < 0.05) spin = null; }
+    if (spin){
+      const ch = drawChargeRing(now);
+      if (ch >= 1 && live){
+        rift = makeRift({ x: spin.cx, y: spin.cy, r: Math.max(90 * SC, spin.r * 1.25) });
+        shockwave(spin.cx, spin.cy, spin.r * 0.5, 275);
+        for (let i = 0; i < 120; i++){
+          const a = Math.random() * Math.PI * 2, sp = (150 + Math.random() * 400) * SC;
+          addSpark(spin.cx + Math.cos(a) * spin.r, spin.cy + Math.sin(a) * spin.r, Math.cos(a) * sp, Math.sin(a) * sp, 0.5 + Math.random() * 0.5, (2 + Math.random() * 3) * SC, Math.random() < 0.6 ? 275 : 195);
+        }
+        spin = null;
+      }
+    }
+  }
   if (!rift) return;
   if (!live) rift.closing = true;
   if (rift.closing){
     rift.amt -= dt * 2.2;
     if (Math.random() < 0.9){
-      const a = Math.random() * Math.PI * 2, d = rift.r * rift.amt;
+      const a = Math.random() * Math.PI * 2, d = rift.r * Math.max(0, rift.amt);
       addSpark(rift.x + Math.cos(a) * d, rift.y + Math.sin(a) * d, -Math.cos(a) * 200 * SC, -Math.sin(a) * 200 * SC, 0.35, 2.5 * SC, 280);
     }
     if (rift.amt <= 0){ rift = null; return; }
