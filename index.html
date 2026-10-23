@@ -34,6 +34,7 @@
   label{display:flex;justify-content:space-between;align-items:center;font-size:.86rem;margin:0 0 6px}
   output{color:var(--cyan);font-weight:600}
   input[type=range]{width:100%;margin:0 0 12px;accent-color:var(--pink)}
+  select{width:100%;font:inherit;font-size:.88rem;color:var(--text);background:#33234d;border:1px solid var(--line);border-radius:10px;padding:8px;margin:0 0 12px}
   .meter{position:relative;height:10px;background:#120b1e;border-radius:6px;margin:0 0 12px;overflow:hidden}
   .meter .fill{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--pink))}
   .meter .mark{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--amber)}
@@ -62,6 +63,8 @@
   <p id="status">Kamera belum nyala.</p>
 
   <button id="btnStart" class="primary">Nyalain kamera & mic</button>
+  <label for="camSel">Kamera</label>
+  <select id="camSel"><option value="">Otomatis (webcam asli)</option></select>
   <button id="btnBg" disabled>Rekam ruangan kosong (5 detik)</button>
   <p class="note">Klik, keluar dari frame, tunggu hitungan mundur, diem sampai rekaman selesai. Laptop jangan digeser setelahnya.</p>
   <button id="btnCalib" disabled>Kalibrasi jentik (3x jentik)</button>
@@ -207,10 +210,17 @@ btnStart.onclick = async () => {
   btnStart.disabled = true;
   try{
     setStatus("Minta izin kamera & mic…");
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60, min: 24 } },
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-    });
+    stream = await openStream("");
+    const want = await pickCamera();
+    const track = stream.getVideoTracks()[0];
+    const curId = track?.getSettings?.().deviceId, curLabel = track?.label || "";
+    if (want && want !== curId){
+      stream.getTracks().forEach(t => t.stop());
+      stream = await openStream(want);
+    } else if (!want && VIRTUAL_CAM.test(curLabel)){
+      stream.getTracks().forEach(t => t.stop());
+      throw new Error("virtual-only");
+    }
     video.srcObject = stream;
     await video.play();
     W = video.videoWidth || 1280; H = video.videoHeight || 720; SC = W / 1280;
@@ -234,9 +244,35 @@ btnStart.onclick = async () => {
   }catch(e){
     console.error(e);
     btnStart.disabled = false;
-    setStatus("Kamera/mic nggak bisa dibuka. Tutup OBS atau aplikasi lain yang lagi pakai webcam, terus izinkan akses di browser.", true);
+    setStatus(e?.message === "virtual-only"
+      ? "Cuma ketemu kamera virtual (misal OBS Virtual Camera). Pastiin webcam laptop nyala dan nggak dipakai aplikasi lain, terus pilih di menu Kamera."
+      : "Kamera/mic nggak bisa dibuka. Tutup aplikasi lain yang lagi pakai webcam, terus izinkan akses kamera.", true);
   }
 };
+
+/* ---------- Camera choice: never feed OBS its own output back ---------- */
+const VIRTUAL_CAM = /obs|virtual|droidcam|xsplit|manycam|snap camera|broadcast|vcam/i;
+const camSel = $("#camSel");
+function openStream(deviceId){
+  return navigator.mediaDevices.getUserMedia({
+    video: { ...(deviceId ? { deviceId: { exact: deviceId } } : {}), width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } },
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+  });
+}
+async function pickCamera(){
+  let saved = ""; try { saved = localStorage.getItem("jentik-cam") || ""; } catch {}
+  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+  camSel.innerHTML = '<option value="">Otomatis (webcam asli)</option>' + devs.map(d => {
+    const name = (d.label || "Kamera").replace(/[<>&]/g, "");
+    return `<option value="${d.deviceId}">${name}${VIRTUAL_CAM.test(d.label) ? " (virtual, jangan dipilih)" : ""}</option>`;
+  }).join("");
+  if (saved && devs.some(d => d.deviceId === saved)){ camSel.value = saved; return saved; }
+  return devs.find(d => d.label && !VIRTUAL_CAM.test(d.label))?.deviceId || "";
+}
+camSel.addEventListener("change", () => {
+  try { localStorage.setItem("jentik-cam", camSel.value); } catch {}
+  if (running) location.reload();
+});
 
 async function importVision(){
   try { return await import(`${MP_BASE}/vision_bundle.mjs`); }
