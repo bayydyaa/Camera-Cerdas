@@ -107,7 +107,7 @@
       <label><input type="radio" name="mode" value="5"> Mode 5 🕳️ Lubang hitam</label>
     </div>
     <p class="note" id="modeNote"></p>
-    <p class="note">🤙 Tahan jempol + kelingking = muka hacker (face scan) nyala / mati. Bisa barengan sama mode apa aja.</p>
+    <p class="note">🤙 Tahan jempol + kelingking = kartu hacker muncul. Jepit pakai telunjuk + jari tengah, kibas buat muterin, lempar cepat (atau dorong ke kamera) = kartu nabrak muka & filter hacker nyala. 🤙 lagi = kartu copot. Bisa barengan sama mode apa aja.</p>
     <label class="check"><input type="checkbox" id="mirror" checked> Cerminin layar (biar gambar & tulisan kebaca)</label>
   </div>
 
@@ -125,8 +125,8 @@
     <dt>C</dt><dd>hapus gambar (Mode 1)</dd>
     <dt>👎 tahan</dt><dd>matiin mode</dd>
     <dt>0–5</dt><dd>ganti mode lewat keyboard</dd>
-    <dt>🤙 tahan</dt><dd>muka hacker nyala / mati (di mode apa aja)</dd>
-    <dt>G</dt><dd>muka hacker lewat keyboard</dd>
+    <dt>🤙 tahan</dt><dd>kartu hacker muncul → lempar ke kamera = filter muka; 🤙 lagi = copot</dd>
+    <dt>G</dt><dd>filter muka langsung nyala / mati (tanpa kartu)</dd>
     <dt>H</dt><dd>sembunyiin / munculin panel</dd>
     <dt>F</dt><dd>layar penuh</dd>
   </dl>
@@ -531,7 +531,7 @@ btnToggle.onclick = toggle;
 /* Darurat pas live: langsung keliatan lagi + semua efek mati. */
 function panicReset(){
   setMode(0); clearHandState();
-  if (hacker){ hacker = false; hackerOffT = -1e9; } hackerAmt = 0;
+  if (hacker){ hacker = false; hackerOffT = -1e9; } hackerAmt = 0; card = null; cardTrail = [];
   state = "visible"; dust.length = 0; sparks.length = 0; waves.length = 0; bursts.length = 0;
   modeFlash = null; ringGhost = null; flashes.length = 0; shakeAmt = 0;
   setStatus("Reset darurat: lu keliatan, semua efek mati.");
@@ -924,7 +924,7 @@ function drawWaves(dt){
 /* ================= Mode activation by finger count, 👎 to turn off ================= */
 const MODE_COUNT = 5, HOLD = 0.8;
 const MODE_HUE = { 0: 45, 1: 310, 2: 190, 3: 275, 4: 160, 5: 200 };
-let actCand = 0, actT0 = 0, actProg = 0, actHand = null;
+let actCand = 0, actT0 = 0, actProg = 0, actHand = null, actLatch = false;
 function activation(now, fresh){
   if (!fresh) return;
   // 🤙 tahan = muka hacker nyala/mati (harus dilepas dulu sebelum bisa toggle lagi)
@@ -933,9 +933,14 @@ function activation(now, fresh){
     shakaHand = sh;
     if (!shakaLatch){
       if (!shakaT0) shakaT0 = now;
-      if (now - shakaT0 >= HOLD * 1000){ toggleHacker(sh.center); shakaLatch = true; shakaT0 = 0; }
+      if (now - shakaT0 >= HOLD * 1000){ shakaAction(sh); shakaLatch = true; shakaT0 = 0; }
     }
   } else { shakaT0 = 0; shakaLatch = false; shakaHand = null; }
+  if (cardBusy()) actLatch = true;                          // lagi megang kartu: jari jangan ganti mode
+  if (actLatch){                                            // ...dan habis dilempar, tunggu bentuk jari dilepas dulu
+    if (!cardBusy() && !hands.some(x => x.count >= 1 || x.thumbDown)) actLatch = false;
+    actCand = 0; actProg = 0; return;
+  }
   let want = 0, h = null;
   if (mode === 0){
     h = hands.find(x => x.count >= 1 && x.count <= MODE_COUNT);
@@ -984,7 +989,7 @@ function drawActivation(now, dt){
       ctx.strokeStyle = "rgba(0,255,140,0.25)"; ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2); ctx.stroke();
       ctx.strokeStyle = "rgba(0,255,140,0.95)"; ctx.beginPath(); ctx.arc(c.x, c.y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * sp); ctx.stroke();
       ctx.restore();
-      label(hacker ? "Hacker OFF" : "Hacker ON", c.x, c.y - r - 24 * SC, "rgb(120,255,180)", Math.min(1, sp * 1.5));
+      label(cardBusy() ? "Simpen kartu" : hacker ? "Hacker OFF" : "Kartu hacker", c.x, c.y - r - 24 * SC, "rgb(120,255,180)", Math.min(1, sp * 1.5));
     }
   }
   if (modeFlash){
@@ -1893,6 +1898,7 @@ function handEffectsIdle(now, dt){
   drawWaves(dt);
   drawActivation(now, dt);
   drawSparks(dt);
+  cardFx(now, dt, false);
   fxEnd(dt);
 }
 /* Forget everything about the hands so nothing old pops back when you reappear. */
@@ -1912,17 +1918,19 @@ function clearHandState(){
 function handEffects(now, dt){
   const fresh = readHands();
   activation(now, fresh);
+  const mf = fresh && !cardBusy();
   fxBegin(dt);
-  if (mode === 1) mode1(now, dt, fresh);
-  else if (mode === 2) mode2(now, dt, fresh);
-  else if (mode === 3) mode3(now, dt, fresh);
-  else if (mode === 4) mode4(now, dt, fresh);
-  else if (mode === 5) mode5(now, dt, fresh);
+  if (mode === 1) mode1(now, dt, mf);
+  else if (mode === 2) mode2(now, dt, mf);
+  else if (mode === 3) mode3(now, dt, mf);
+  else if (mode === 4) mode4(now, dt, mf);
+  else if (mode === 5) mode5(now, dt, mf);
 
   drawBursts(dt);
   drawWaves(dt);
   drawActivation(now, dt);
   drawSparks(dt);
+  cardFx(now, dt, fresh);
   fxEnd(dt);
 }
 
@@ -1997,8 +2005,8 @@ function htext(t, x, y, px, color, alpha = 1, align = "left"){
 }
 const fx = i => faceD[i * 2], fy = i => faceD[i * 2 + 1];
 function drawHacker(now, dt, live){
-  if (!hacker && hackerAmt <= 0 && now - hackerOffT > 900) return;
-  if (live && hacker) readFace();
+  if (!hacker && !card && hackerAmt <= 0 && now - hackerOffT > 900) return;
+  if (live && (hacker || cardBusy())) readFace();      // pas kartu keluar: cari muka buat target lemparan
   const seen = live && hacker && faceT && now - faceSeen < 350;
   hackerAmt = seen ? Math.min(1, hackerAmt + dt * 2.5) : Math.max(0, hackerAmt - dt * 2.5);
   if (faceT){
@@ -2157,6 +2165,223 @@ function drawHacker(now, dt, live){
   }
 }
 
+/* ================= 🃏 Kartu hacker: dipegang, dilempar, nempel ke muka =================
+   🤙 tahan → kartu muncul di tangan. Jepit pakai 2 jari, mainin (kibas = kartu muter).
+   Lempar (kibas cepat / dorong ke kamera) → kartu terbang 3D ke depan kamera → nabrak muka → filter hacker nyala.
+   🤙 lagi pas filter nyala → kartu copot dari muka & terbang pergi. */
+const CARD_W = 250, CARD_H = 350;
+function makeCardArt(back){
+  const c = document.createElement("canvas"); c.width = CARD_W; c.height = CARD_H;
+  const x = c.getContext("2d"), G = "#00ff8c";
+  const rr = (X, Y, w, h, r) => { x.beginPath(); if (x.roundRect) x.roundRect(X, Y, w, h, r); else x.rect(X, Y, w, h); };
+  const g = x.createLinearGradient(0, 0, CARD_W, CARD_H); g.addColorStop(0, "#03140c"); g.addColorStop(1, "#0b2c1b");
+  rr(4, 4, CARD_W - 8, CARD_H - 8, 22); x.fillStyle = g; x.fill();
+  x.save(); rr(4, 4, CARD_W - 8, CARD_H - 8, 22); x.clip();
+  x.textAlign = "center"; x.textBaseline = "middle";
+  if (back){
+    x.strokeStyle = "rgba(0,255,140,0.16)"; x.lineWidth = 1;
+    for (let i = -CARD_H; i < CARD_W + CARD_H; i += 16){
+      x.beginPath(); x.moveTo(i, 0); x.lineTo(i + CARD_H, CARD_H); x.stroke();
+      x.beginPath(); x.moveTo(i, CARD_H); x.lineTo(i + CARD_H, 0); x.stroke();
+    }
+    x.strokeStyle = G; x.lineWidth = 4; x.beginPath();
+    for (let v = 0; v <= 6; v++){ const a = v * Math.PI / 3 - Math.PI / 2, px = CARD_W / 2 + Math.cos(a) * 64, py = CARD_H / 2 + Math.sin(a) * 64; v ? x.lineTo(px, py) : x.moveTo(px, py); }
+    x.stroke();
+    x.fillStyle = G; x.font = "800 50px ui-monospace, Consolas, monospace"; x.fillText("JH", CARD_W / 2, CARD_H / 2 + 2);
+  } else {
+    x.fillStyle = "rgba(0,255,140,0.05)"; for (let y = 0; y < CARD_H; y += 4) x.fillRect(0, y, CARD_W, 1.5);
+    x.textAlign = "left"; x.fillStyle = G; x.font = "700 15px ui-monospace, Consolas, monospace"; x.fillText("ACCESS GRANTED", 20, 32);
+    x.fillStyle = "rgba(125,255,176,0.85)"; rr(20, 52, 46, 36, 6); x.fill();
+    x.strokeStyle = "#03140c"; x.lineWidth = 2; x.beginPath(); x.moveTo(20, 70); x.lineTo(66, 70); x.moveTo(43, 52); x.lineTo(43, 88); x.stroke();
+    const cx = CARD_W / 2, cy = 180;
+    x.strokeStyle = G; x.lineWidth = 3; x.beginPath(); x.ellipse(cx, cy, 52, 66, 0, 0, Math.PI * 2); x.stroke();
+    x.lineWidth = 1.2; x.strokeStyle = "rgba(0,255,140,0.6)";
+    for (let i = -2; i <= 2; i++){ x.beginPath(); x.ellipse(cx, cy, Math.abs(i) * 13 + 4, 66, 0, 0, Math.PI * 2); x.stroke(); }
+    for (let i = -3; i <= 3; i++){ const yy = cy + i * 18, ww = 52 * Math.sqrt(Math.max(0, 1 - (i * 18 / 66) ** 2)); x.beginPath(); x.moveTo(cx - ww, yy); x.lineTo(cx + ww, yy); x.stroke(); }
+    x.strokeStyle = "#ff4060"; x.lineWidth = 2;
+    for (const ex of [cx - 20, cx + 20]){ x.beginPath(); x.arc(ex, cy - 12, 8, 0, Math.PI * 2); x.stroke(); }
+    x.strokeStyle = G; x.lineWidth = 3;
+    for (const [X, Y, sx, sy] of [[cx - 78, cy - 90, 1, 1], [cx + 78, cy - 90, -1, 1], [cx - 78, cy + 90, 1, -1], [cx + 78, cy + 90, -1, -1]]){
+      x.beginPath(); x.moveTo(X + sx * 18, Y); x.lineTo(X, Y); x.lineTo(X, Y + sy * 18); x.stroke();
+    }
+    x.textAlign = "center"; x.fillStyle = "#c8ffe0"; x.font = "800 26px ui-monospace, Consolas, monospace"; x.fillText("FACE//HACK", cx, 292);
+    x.fillStyle = G; let bx = 34;
+    for (let i = 0; bx < CARD_W - 34; i++){ const w = 1 + ((i * 7919) % 4); x.fillRect(bx, 312, w, 18); bx += w + 2 + ((i * 31) % 3); }
+  }
+  x.restore();
+  rr(4, 4, CARD_W - 8, CARD_H - 8, 22); x.lineWidth = 5; x.strokeStyle = G; x.stroke();
+  rr(13, 13, CARD_W - 26, CARD_H - 26, 15); x.lineWidth = 1.5; x.strokeStyle = "rgba(200,255,224,0.7)"; x.stroke();
+  return c;
+}
+const cardFront = makeCardArt(false), cardBack = makeCardArt(true);
+let card = null, cardTrail = [];
+const cardHist = [];
+const cardBusy = () => !!card && (card.state === "held" || card.state === "float" || card.state === "fly");
+
+function paintCard(x, y, h, rz, ry, alpha, glow = 1, sheen = true){
+  if (h < 2 || alpha <= 0) return;
+  const w = h * CARD_W / CARD_H, c = Math.cos(ry), img = c >= 0 ? cardFront : cardBack;
+  ctx.save(); ctx.globalAlpha = Math.min(1, alpha);
+  ctx.translate(x, y); ctx.rotate(rz);
+  ctx.scale((mirrorEl.checked ? -1 : 1) * Math.max(0.03, Math.abs(c)), 1);   // flip 3D + biar tulisan kebaca pas dicerminin
+  ctx.transform(1, Math.sin(ry) * 0.12, 0, 1, 0, 0);                          // miring dikit = kesan perspektif
+  if (glow > 0){ ctx.shadowBlur = 28 * SC * glow; ctx.shadowColor = "rgba(0,255,140,0.9)"; }
+  ctx.drawImage(img, -w / 2, -h / 2, w, h);
+  ctx.shadowBlur = 0;
+  if (sheen){                                                                  // kilau yang nyapu pas kartu muter
+    const p = Math.min(0.9, Math.max(0.1, Math.sin(ry) * 0.5 + 0.5)), m = 4 * h / CARD_H;
+    const g = ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2);
+    g.addColorStop(0, "rgba(255,255,255,0)"); g.addColorStop(p - 0.1, "rgba(255,255,255,0)");
+    g.addColorStop(p, "rgba(200,255,225,0.38)"); g.addColorStop(p + 0.1, "rgba(255,255,255,0)"); g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.globalCompositeOperation = "lighter"; ctx.fillStyle = g; ctx.fillRect(-w / 2 + m, -h / 2 + m, w - 2 * m, h - 2 * m);
+  }
+  ctx.restore();
+}
+function faceInfo(){
+  if (!faceD || !FC || performance.now() - faceSeen > 600) return null;
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const i of FC.oval){ const x = fx(i), y = fy(i); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, h: (y1 - y0) * 1.1, roll: Math.atan2(fy(263) - fy(33), fx(263) - fx(33)) };
+}
+/* Kartu dijepit di ujung telunjuk + tengah; kalau jari lain, ngambang di atas telapak. */
+function cardAnchor(h){
+  const c = h.center;
+  if (h.idx && h.mid){
+    const m = { x: (h.p8.x + h.p12.x) / 2, y: (h.p8.y + h.p12.y) / 2 }, dx = m.x - c.x, dy = m.y - c.y, L = Math.hypot(dx, dy) || 1;
+    return { x: m.x + dx / L * h.size * 0.3, y: m.y + dy / L * h.size * 0.3, rz: Math.atan2(dy, dx) + Math.PI / 2 - 0.3 };
+  }
+  const wx = h.lm[0].x * W, wy = h.lm[0].y * H, dx = c.x - wx, dy = c.y - wy, L = Math.hypot(dx, dy) || 1;
+  return { x: c.x + dx / L * h.size * 1.05, y: c.y + dy / L * h.size * 1.05, rz: Math.atan2(dy, dx) + Math.PI / 2 };
+}
+function summonCard(h){
+  loadFace();
+  const a = cardAnchor(h), now = performance.now();
+  card = { state: "held", side: h.side, born: now, x: a.x, y: a.y, tx: a.x, ty: a.y, rz: a.rz, trz: a.rz,
+    h: h.size * 1.05, th: h.size * 1.05, spin: 0, spinV: 0, ry: 0, vx: 0, vy: 0, grow: 1, lostT: 0 };
+  cardHist.length = 0;
+  shockwave(a.x, a.y, 30 * SC, 140); burst(a.x, a.y, 50, 300, [140, 120, 170], 0.7);
+  setDetect("🃏 Kartu muncul. Jepit pakai 2 jari, mainin, terus lempar ke kamera!", "ok", true);
+}
+function poofCard(){
+  if (!card) return;
+  burst(card.x, card.y, 50, 320, [140, 120, 170], 0.6); shockwave(card.x, card.y, 30 * SC, 140);
+  card = null; cardTrail = [];
+}
+function throwCard(now, dir){
+  const v = Math.hypot(card.vx, card.vy);
+  const f = faceInfo();
+  if (!dir) dir = v > 1 ? { x: card.vx / v, y: card.vy / v } : f ? { x: (f.x - card.x) / (Math.hypot(f.x - card.x, f.y - card.y) || 1), y: (f.y - card.y) / (Math.hypot(f.x - card.x, f.y - card.y) || 1) } : { x: 0, y: -1 };
+  Object.assign(card, { state: "fly", t0: now, p0: { x: card.x, y: card.y }, h0: card.h, dir, rz0: card.rz,
+    ry0: ((card.ry % 6.283) + 6.283) % 6.283, fallback: { x: W / 2, y: H * 0.4, h: H * 0.45, roll: 0 } });
+  cardTrail = [];
+  burst(card.x, card.y, 30, 320, [140, 170], 0.5);
+  setDetect("🃏 Kartu dilempar!", "ok", true);
+}
+function slapCard(now){
+  const f = faceInfo() || card.fallback;
+  Object.assign(card, { state: "melt", t0: now, last: f });
+  cardTrail = [];
+  impact(f.x, f.y, 140, 0.8); shockwave(f.x, f.y, f.h * 0.35, 140);
+  setTimeout(() => shockwave(f.x, f.y, f.h * 0.25, 170), 100);
+  burst(f.x, f.y, 140, 750, [140, 120, 170, 60], 0.9, 1.1);
+  if (!hacker) toggleHacker({ x: f.x, y: f.y });
+}
+function peelCard(){
+  const f = faceInfo();
+  if (hacker) toggleHacker(f ? { x: f.x, y: f.y } : null);
+  if (!f) return;
+  card = { state: "peel", t0: performance.now(), x: f.x, y: f.y, h: f.h, rz: f.roll, ry: 0, start: f, dir: { x: f.x < W / 2 ? -1 : 1, y: -0.55 } };
+}
+/* 🤙 = satu tombol buat semuanya, tergantung keadaan. */
+function shakaAction(h){
+  if (cardBusy() && card.state !== "fly"){ poofCard(); setDetect("🃏 Kartu disimpen", "ok", true); return; }
+  if (card) return;                                   // lagi terbang / nempel: tunggu
+  if (hacker){ peelCard(); return; }
+  summonCard(h);
+}
+const lerpAng = (a, b, t) => { let d = b - a; d = Math.atan2(Math.sin(d), Math.cos(d)); return a + d * t; };
+
+function cardFx(now, dt, fresh){
+  if (!card) return;
+  const live = state === "visible";
+  if (!live && cardBusy()){ poofCard(); return; }
+
+  if (card.state === "held" || card.state === "float"){
+    if (fresh){
+      const h = hands.find(x => x.side === card.side) || hands[0];
+      if (h){
+        card.side = h.side; card.lostT = 0;
+        if (card.state === "float") card.state = "held";
+        const a = cardAnchor(h);
+        card.tx = a.x; card.ty = a.y; card.trz = a.rz; card.th = h.size * 1.05;
+        cardHist.push({ x: h.palm.x, y: h.palm.y, s: h.size, t: now });
+        while (cardHist.length > 1 && now - cardHist[0].t > 160) cardHist.shift();
+        const o = cardHist[0], dtv = (now - o.t) / 1000;
+        if (dtv > 0.05){ card.vx = (h.palm.x - o.x) / dtv; card.vy = (h.palm.y - o.y) / dtv; card.grow = h.size / (o.s || h.size); }
+        if (now - card.born > 700){
+          if (Math.hypot(card.vx, card.vy) > 1300 * SC){ throwCard(now); }
+          else if (card.grow > 1.3){ card.vx = card.vy = 0; throwCard(now); }   // dorong ke arah kamera: terbang lurus ke muka
+        }
+      } else {
+        if (!card.lostT){
+          card.lostT = now;
+          // tangan ilang pas lagi gerak cepat = blur karena dilempar
+          if (now - card.born > 700 && (Math.hypot(card.vx, card.vy) > 550 * SC || card.grow > 1.15)) throwCard(now);
+          else card.state = "float";
+        }
+        cardHist.length = 0;
+      }
+    }
+    if (card.state === "float" && now - card.lostT > 2500){ poofCard(); setDetect("🃏 Tangan nggak keliatan, kartu ilang", "no", true); return; }
+  }
+
+  if (card.state === "held" || card.state === "float"){
+    const e = 1 - Math.exp(-dt * 26);
+    card.x += (card.tx - card.x) * e; card.y += (card.ty - card.y) * e;
+    card.h += (card.th - card.h) * e * 0.5; card.rz = lerpAng(card.rz, card.trz, e);
+    // kibas ke samping = kartu muter balik; diem = balik ngadep depan
+    card.spinV = approach(card.spinV, card.state === "held" ? card.vx / (260 * SC) : 0, dt, 5);
+    card.spin += card.spinV * dt;
+    if (Math.abs(card.spinV) < 0.6) card.spin = approach(card.spin, Math.round(card.spin / 6.283) * 6.283, dt, 5);
+    const s0 = Math.min(1, (now - card.born) / 380), se = 1 - Math.pow(1 - s0, 3);
+    card.ry = card.spin + Math.sin(now / 650) * 0.35 + (1 - se) * Math.PI * 3;
+    const fl = card.state === "float", bob = fl ? Math.sin(now / 300) * 6 * SC : 0;
+    const al = fl ? Math.min(1, (2500 - (now - card.lostT)) / 600) : 1;
+    paintCard(card.x, card.y + bob, card.h * se, card.rz, card.ry, al, 1 + 0.3 * Math.sin(now / 200));
+    if (Math.random() < 0.35){
+      const a = Math.random() * 6.283, r = card.h * 0.5;
+      addSpark(card.x + Math.cos(a) * r * 0.7, card.y + Math.sin(a) * r, (Math.random() - 0.5) * 60 * SC, -(20 + Math.random() * 50) * SC, 0.5, (1.5 + Math.random() * 2) * SC, Math.random() < 0.7 ? 140 : 170, Math.random() < 0.5 ? 0 : 2);
+    }
+  } else if (card.state === "fly"){
+    const t = Math.min(1, (now - card.t0) / 900), u = 1 - t;
+    const f = faceInfo() || card.fallback, P0 = card.p0;
+    const P1 = { x: P0.x + card.dir.x * H * 0.35, y: P0.y + card.dir.y * H * 0.35 }, P2 = { x: W / 2 + (f.x - W / 2) * 0.35, y: H * 0.5 };
+    const x = u * u * u * P0.x + 3 * u * u * t * P1.x + 3 * u * t * t * P2.x + t * t * t * f.x;
+    const y = u * u * u * P0.y + 3 * u * u * t * P1.y + 3 * u * t * t * P2.y + t * t * t * f.y;
+    const big = H * 1.05;                                             // paling deket ke kamera
+    const h = t < 0.55 ? card.h0 + (big - card.h0) * (1 - Math.pow(1 - t / 0.55, 2)) : big + (f.h - big) * Math.pow((t - 0.55) / 0.45, 1.6);
+    const e = t * t * (3 - 2 * t);
+    const ry = card.ry0 * (1 - e) + e * Math.PI * 6, rz = lerpAng(card.rz0, f.roll, e) + Math.sin(Math.PI * t) * 0.9;
+    cardTrail.push({ x, y, h, rz, ry }); if (cardTrail.length > 7) cardTrail.shift();
+    cardTrail.forEach((g, i) => { if (i < cardTrail.length - 1) paintCard(g.x, g.y, g.h, g.rz, g.ry, (i + 1) / cardTrail.length * 0.3, 0, false); });
+    paintCard(x, y, h, rz, ry, 1, 1.4);
+    Object.assign(card, { x, y, h, rz, ry });
+    if (Math.random() < 0.8) addSpark(x, y, -card.dir.x * 200 * SC + (Math.random() - 0.5) * 120 * SC, -card.dir.y * 200 * SC + (Math.random() - 0.5) * 120 * SC, 0.5, (2 + Math.random() * 3) * SC, Math.random() < 0.7 ? 140 : 60, 1);
+    if (t >= 1) slapCard(now);
+  } else if (card.state === "melt"){
+    const t = (now - card.t0) / 450;
+    if (t >= 1){ card = null; return; }
+    const f = faceInfo() || card.last;
+    paintCard(f.x, f.y, f.h * (1 + t * 0.18), f.roll, 0, (1 - t) * (1 - t), 1.6 * (1 - t));
+  } else if (card.state === "peel"){
+    const t = (now - card.t0) / 750;
+    if (t >= 1){ card = null; return; }
+    const e = t * t, s = card.start;
+    const al = t < 0.15 ? t / 0.15 : 1 - Math.max(0, (t - 0.6) / 0.4);
+    paintCard(s.x + card.dir.x * e * W * 0.8, s.y + card.dir.y * e * H * 0.9, s.h * (1 - 0.6 * e), s.roll + e * 2.2 * card.dir.x, e * Math.PI * 4, al, 1);
+  }
+}
+
 /* ================= Main loop ================= */
 let prev = performance.now(), frameAvg = 1 / 60;
 function loop(now){
@@ -2225,7 +2450,7 @@ addEventListener("keydown", e => {
   else if (e.key === "p" || e.key === "P") nextFilter(-1);
   else if (e.key === "c" || e.key === "C"){ strokes = []; curStroke = null; }
   else if (e.key === "h" || e.key === "H") document.body.classList.toggle("clean");
-  else if (e.key === "g" || e.key === "G") toggleHacker();
+  else if (e.key === "g" || e.key === "G"){ card = null; cardTrail = []; toggleHacker(); }
   else if (e.key === "f" || e.key === "F"){
     if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {});
   }
