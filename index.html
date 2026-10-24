@@ -107,7 +107,7 @@
       <label><input type="radio" name="mode" value="5"> Mode 5 🕳️ Lubang hitam</label>
     </div>
     <p class="note" id="modeNote"></p>
-    <p class="note">🤙 Tahan jempol + kelingking = kartu hacker muncul. Jepit pakai telunjuk + jari tengah dirapetin (kartu ikut muter sama jari), terus renggangin 2 jari = kartu pecah, melayang, nyusun ulang di muka & filter hacker nyala. 🤙 lagi = kartu copot. Bisa barengan sama mode apa aja.</p>
+    <p class="note">🤙 Tahan jempol + kelingking = kartu hacker muncul. ☝️ = kartu melayang muter di atas telunjuk. Jepit pakai telunjuk + tengah dirapetin (kartu ikut arah jari), tahan sebentar, terus renggangin lebar = kartu kepotong, ngumpul di celah jari, melayang ke depan muka, nyusun jadi kartu & nyatu ke muka. 🤙 lagi = kartu copot. Bisa barengan sama mode apa aja.</p>
     <label class="check"><input type="checkbox" id="mirror" checked> Cerminin layar (biar gambar & tulisan kebaca)</label>
   </div>
 
@@ -125,7 +125,7 @@
     <dt>C</dt><dd>hapus gambar (Mode 1)</dd>
     <dt>👎 tahan</dt><dd>matiin mode</dd>
     <dt>0–5</dt><dd>ganti mode lewat keyboard</dd>
-    <dt>🤙 tahan</dt><dd>kartu hacker muncul → jepit 2 jari rapet → renggangin = kartu pecah & nempel di muka; 🤙 lagi = copot</dd>
+    <dt>🤙 tahan</dt><dd>kartu hacker muncul. ☝️ = kartu muter di jari. 2 jari rapet → renggangin lebar = kartu ke muka. 🤙 lagi = copot</dd>
     <dt>G</dt><dd>filter muka langsung nyala / mati (tanpa kartu)</dd>
     <dt>H</dt><dd>sembunyiin / munculin panel</dd>
     <dt>F</dt><dd>layar penuh</dd>
@@ -754,6 +754,7 @@ function readHands(){
     };
     return {
       lm, wl, name, score, idx, mid, ring, pink, count, side, pair: pairState(side, idx, mid, ring, pink, wl),
+      spreadR: idx && mid ? d3(wl[8], wl[12]) / (d3(wl[5], wl[8]) || 1) : 0,   // seberapa renggang telunjuk–tengah
       open: (idx && mid && ring && pink) || (name === "Open_Palm" && score > 0.6),
       fist: (!idx && !mid && !ring && !pink) || (name === "Closed_Fist" && score > 0.6),
       thumbDown: name === "Thumb_Down" && score > 0.6,
@@ -1973,8 +1974,7 @@ let faceT = null, faceD = null, faceSeen = 0, lastFaceVT = -1;
 let shakaT0 = 0, shakaLatch = false, shakaHand = null;
 const RAIN_CH = "01アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789ABCDEF<>/{}#$";
 const rndCh = () => RAIN_CH[(Math.random() * RAIN_CH.length) | 0];
-let rain = [], glitchUntil = 0, nextGlitch = 0, hexLine = "", hexT = 0;
-const subjectId = "0x" + Math.floor(Math.random() * 0xffff).toString(16).toUpperCase().padStart(4, "0");
+let rain = [], glitchUntil = 0, nextGlitch = 0;
 
 function chainOrder(edges){
   const next = new Map(); edges.forEach(e => next.set(e.start, e.end));
@@ -2035,7 +2035,7 @@ function htext(t, x, y, px, color, alpha = 1, align = "left"){
 const fx = i => faceD[i * 2], fy = i => faceD[i * 2 + 1];
 function drawHacker(now, dt, live){
   if (!hacker && !card && hackerAmt <= 0 && now - hackerOffT > 900) return;
-  if (live && (hacker || cardBusy())) readFace();      // pas kartu keluar: cari muka buat target lemparan
+  if (live && (hacker || card)) readFace();            // pas kartu keluar: cari muka buat target kepingan
   const seen = live && hacker && faceT && now - faceSeen < 350;
   hackerAmt = seen ? Math.min(1, hackerAmt + dt * 2.5) : Math.max(0, hackerAmt - dt * 2.5);
   if (faceT){
@@ -2157,71 +2157,11 @@ function drawHacker(now, dt, live){
       ctx.beginPath(); ctx.arc(cx, cy, R * 1.08, -now / 900 + Math.PI, -now / 900 + Math.PI + 0.9); ctx.stroke();
     }
 
-    // 5) kotak target: ngunci dari gede ke pas muka pas baru nyala
-    const lk = Math.min(1, boot / 0.7), le = 1 - Math.pow(1 - lk, 3), grow = 1 + (1 - le) * 0.9 + (glitching ? (Math.random() - 0.5) * 0.04 : 0);
-    const hw = bw * 0.62 * grow, hh = bh * 0.6 * grow, L = Math.min(hw, hh) * 0.35;
-    const bx0 = cx - hw, bx1 = cx + hw, by0 = cy - hh, by1 = cy + hh;
-    ctx.strokeStyle = `rgba(0,255,140,${a * (lk < 1 && !blink ? 0.4 : 1)})`; ctx.lineWidth = 3 * SC; ctx.beginPath();
-    for (const [X, Y, sx, sy2] of [[bx0, by0, 1, 1], [bx1, by0, -1, 1], [bx0, by1, 1, -1], [bx1, by1, -1, -1]]){
-      ctx.moveTo(X + sx * L, Y); ctx.lineTo(X, Y); ctx.lineTo(X, Y + sy2 * L);
-    }
-    ctx.stroke();
-    ctx.lineWidth = 1.5 * SC; ctx.beginPath();
-    ctx.moveTo(cx, by0 - 8 * SC); ctx.lineTo(cx, by0 + 8 * SC); ctx.moveTo(cx, by1 - 8 * SC); ctx.lineTo(cx, by1 + 8 * SC);
-    ctx.moveTo(bx0 - 8 * SC, cy); ctx.lineTo(bx0 + 8 * SC, cy); ctx.moveTo(bx1 - 8 * SC, cy); ctx.lineTo(bx1 + 8 * SC, cy);
-    ctx.stroke();
     ctx.restore();
-    const right = mirrorEl.checked ? -1 : 1;          // arah "kanan" di layar
-    const tagX = right > 0 ? bx0 : bx1;
-    htext(lk < 1 ? "ACQUIRING TARGET…" : seen ? "■ TARGET LOCKED" : "■ SIGNAL LOST", tagX, by0 - 16 * SC, 15, lk < 1 || !seen ? "rgb(255,210,90)" : G, a * (lk < 1 && !blink ? 0.5 : 1));
-
-    // 6) panel data di samping muka, ngetik pas baru nyala
-    if (now - hexT > 90){ hexT = now; hexLine = Array.from({ length: 18 }, () => "0123456789ABCDEF"[(Math.random() * 16) | 0]).join(""); }
-    const nl = 1, ll = 234, rr = 454;
-    const dl = Math.hypot(fx(nl) - fx(ll), fy(nl) - fy(ll)), dr = Math.hypot(fx(nl) - fx(rr), fy(nl) - fy(rr));
-    const yaw = (dl - dr) / ((dl + dr) || 1) * 90 * right;
-    const lines = [
-      `> SUBJECT ${subjectId}`,
-      `MATCH   ${(97.2 + Math.sin(now / 700) * 1.6).toFixed(1)}%`,
-      `POS     X${String(cx | 0).padStart(4, "0")} Y${String(cy | 0).padStart(4, "0")}`,
-      `YAW     ${yaw >= 0 ? "+" : ""}${yaw.toFixed(1)}°`,
-      `MESH    ${n} PTS`,
-      `STATUS  ${seen ? "TRACKING" : "SIGNAL LOST"}`,
-      hexLine
-    ];
-    const px = (right > 0 ? bx1 : bx0) + right * 34 * SC, py = by0 + 10 * SC, lh = 20 * SC, pw = 230 * SC;
-    const prx = right > 0 ? px - 10 * SC : px - pw + 10 * SC, pry = py - 40 * SC, prh = lines.length * lh + 38 * SC;
-    ctx.save(); ctx.fillStyle = `rgba(0,20,10,${0.6 * a})`; ctx.fillRect(prx, pry, pw, prh);
-    ctx.fillStyle = `rgba(0,255,140,${0.22 * a})`; ctx.fillRect(prx, pry, pw, 20 * SC);              // title bar
-    ctx.globalCompositeOperation = "lighter"; ctx.strokeStyle = `rgba(0,255,140,${0.8 * a})`; ctx.lineWidth = 1.5 * SC;
-    ctx.strokeRect(prx, pry, pw, prh);
-    const cl = 10 * SC; ctx.lineWidth = 3 * SC; ctx.beginPath();                                             // siku tebel di pojok panel
-    for (const [X, Y, sx2, sy3] of [[prx, pry, 1, 1], [prx + pw, pry, -1, 1], [prx, pry + prh, 1, -1], [prx + pw, pry + prh, -1, -1]]){ ctx.moveTo(X + sx2 * cl, Y); ctx.lineTo(X, Y); ctx.lineTo(X, Y + sy3 * cl); }
-    ctx.stroke();
-    ctx.lineWidth = 1.5 * SC; ctx.setLineDash([6 * SC, 6 * SC]); ctx.lineDashOffset = -now / 15 * right;    // link data ngalir ke panel
-    ctx.beginPath(); ctx.moveTo(right > 0 ? bx1 : bx0, by0 + L); ctx.lineTo(px - right * 10 * SC, py - 16 * SC); ctx.stroke(); ctx.setLineDash([]);
-    ctx.restore();
-    // htext mulai dari x ke "kanan layar"; pas dicerminin, kiri-layar panel = sisi kanan canvas
-    htext("FACE//HACK v2", right > 0 ? prx + 8 * SC : prx + pw - 8 * SC, pry + 10 * SC, 12, "rgb(190,255,210)", a);
-    if (blink) htext("● REC", right > 0 ? prx + pw - 52 * SC : prx + 52 * SC, pry + 10 * SC, 12, "rgb(255,70,90)", a);
-    const typed = Math.max(0, (boot - 0.4) * 60);
-    let used = 0;
-    lines.forEach((t, i) => {
-      const show = Math.min(t.length, Math.floor(typed - used)); used += t.length;
-      if (show <= 0) return;
-      htext(t.slice(0, show) + (show < t.length && blink ? "█" : ""), px, py + i * lh, 14, i === 0 ? GL : i === lines.length - 1 ? "rgba(0,255,140,0.55)" : G, a);
-    });
   }
 
   // booting / nyari muka / mati
-  if (hacker && live && boot < 1.3){
-    const k = Math.min(1, boot / 1.1), bx = lastBox && seen ? lastBox.cx : W / 2, by = lastBox && seen ? lastBox.y1 + 50 * SC : H * 0.82;
-    htext("INITIALIZING FACE SCAN", bx, by, 18, G, blink ? 1 : 0.6, "center");
-    const w = 240 * SC, h = 10 * SC, x = bx - w / 2;
-    ctx.save(); ctx.strokeStyle = G; ctx.lineWidth = 1.5 * SC; ctx.strokeRect(x, by + 18 * SC, w, h);
-    ctx.fillStyle = G; ctx.fillRect(mirrorEl.checked ? x + w * (1 - k) : x, by + 18 * SC, w * k, h); ctx.restore();
-    htext(`${Math.round(k * 100)}%`, bx, by + 44 * SC, 14, GL, 1, "center");
-  } else if (hacker && live && !seen && blink){
+  if (hacker && live && !seen && boot > 0.8 && blink){
     htext(faceLm ? "▒ SCANNING FOR FACE…" : "▒ LOADING FACE AI…", W / 2, 70 * SC, 20, "rgb(255,210,90)", 0.9, "center");
   }
   if (!hacker && now - hackerOffT < 900 && lastBox){
@@ -2281,7 +2221,7 @@ function makeCardArt(back){
 const cardFront = makeCardArt(false), cardBack = makeCardArt(true);
 let card = null, cardTrail = [];
 const cardHist = [];
-const cardBusy = () => !!card && (card.state === "held" || card.state === "float" || card.state === "shatter");
+const cardBusy = () => !!card && (card.state === "held" || card.state === "float" || card.state === "shatter" || card.state === "snap");
 
 function paintCard(x, y, h, rz, ry, alpha, glow = 1, sheen = true){
   if (h < 2 || alpha <= 0) return;
@@ -2318,6 +2258,11 @@ function cardAnchor(h){
     const dx = m.x - k.x, dy = m.y - k.y, L = Math.hypot(dx, dy) || 1;
     return { x: m.x + dx / L * h.size * 0.32, y: m.y + dy / L * h.size * 0.32, rz: Math.atan2(dy, dx) + Math.PI / 2 - 0.12 };
   }
+  if (h.idx){
+    // ☝️: kartu ngambang di atas ujung telunjuk, muter kayak gasing
+    const k = { x: h.lm[5].x * W, y: h.lm[5].y * H }, dx = h.p8.x - k.x, dy = h.p8.y - k.y, L = Math.hypot(dx, dy) || 1;
+    return { x: h.p8.x + dx / L * h.size * 0.75, y: h.p8.y + dy / L * h.size * 0.75, rz: Math.atan2(dy, dx) + Math.PI / 2, spin: true, tip: h.p8, ux: dx / L, uy: dy / L };
+  }
   const wx = h.lm[0].x * W, wy = h.lm[0].y * H, dx = c.x - wx, dy = c.y - wy, L = Math.hypot(dx, dy) || 1;
   return { x: c.x + dx / L * h.size * 1.05, y: c.y + dy / L * h.size * 1.05, rz: Math.atan2(dy, dx) + Math.PI / 2 };
 }
@@ -2325,37 +2270,38 @@ function summonCard(h){
   loadFace();
   const a = cardAnchor(h), now = performance.now();
   card = { state: "held", side: h.side, born: now, x: a.x, y: a.y, tx: a.x, ty: a.y, rz: a.rz, trz: a.rz,
-    h: h.size * 1.05, th: h.size * 1.05, spin: 0, spinV: 0, ry: 0, vx: 0, vy: 0, lostT: 0, swordT: 0, veeF: 0 };
+    h: h.size * 1.05, th: h.size * 1.05, spin: 0, spinV: 0, ry: 0, vx: 0, vy: 0, lostT: 0, swordT: 0, veeF: 0, spinMode: false, tip: null };
   cardHist.length = 0;
   shockwave(a.x, a.y, 30 * SC, 140); burst(a.x, a.y, 50, 300, [140, 120, 170], 0.7);
-  setDetect("🃏 Kartu muncul. Jepit pakai telunjuk + tengah (rapet), puter-puter, terus renggangin 2 jari!", "ok", true);
+  setDetect("🃏 Kartu muncul. ☝️ = kartu muter di jari. Jepit telunjuk + tengah rapet, terus renggangin lebar = kartu ke muka!", "ok", true);
 }
 function poofCard(){
   if (!card) return;
   burst(card.x, card.y, 50, 320, [140, 120, 170], 0.6); shockwave(card.x, card.y, 30 * SC, 140);
   card = null; cardTrail = [];
 }
-/* Renggangin 2 jari: kartu retak → pecah 12 keping → melayang sebentar → nyusun ulang di muka. */
-const SH_C = 3, SH_R = 4;
-function launchCard(now){
-  const sh = [];
+/* Renggangin 2 jari: kartu kepotong → potongan ngumpul muter di celah 2 jari → melayang satu-satu ke depan muka
+   → nyusun jadi kartu utuh → kartu "nyatu" ke muka (garis scan nyapu, di baliknya filter muncul). */
+const SH_C = 3, SH_R = 4, SH_N = SH_C * SH_R;
+const PH = { crack: 0.12, gather: 0.32, gap: 0.035, fly: 0.62, snap: 0.18, merge: 0.65 };
+const gapOf = h => ({ x: (h.p8.x + h.p12.x) / 2, y: (h.p8.y + h.p12.y) / 2 });
+function launchCard(now, h){
+  const order = [...Array(SH_N).keys()].sort(() => Math.random() - 0.5), sh = [];
   for (let r = 0; r < SH_R; r++) for (let c = 0; c < SH_C; c++){
-    const ox = (c + 0.5) / SH_C - 0.5, oy = (r + 0.5) / SH_R - 0.5, a = Math.atan2(oy, ox) + (Math.random() - 0.5) * 0.8;
-    sh.push({ c, r, ox, oy, dx: Math.cos(a), dy: Math.sin(a), spin: (Math.random() - 0.5) * 5, lift: 0.6 + Math.random() * 0.8, delay: Math.random() * 0.12 });
+    sh.push({ c, r, ox: (c + 0.5) / SH_C - 0.5, oy: (r + 0.5) / SH_R - 0.5, a0: Math.random() * 6.283, rad: 0.5 + Math.random() * 0.5,
+      spin: (Math.random() - 0.5) * 6, flip: 1 + Math.random() * 1.5, order: order[r * SH_C + c] });
   }
-  Object.assign(card, { state: "shatter", t0: now, from: { x: card.x, y: card.y, h: card.h, rz: card.rz }, shards: sh,
+  const g = h ? gapOf(h) : { x: card.x, y: card.y };
+  Object.assign(card, { state: "shatter", t0: now, from: { x: card.x, y: card.y, h: card.h, rz: card.rz }, shards: sh, G: g,
     fallback: { x: W / 2, y: H * 0.4, h: H * 0.45, roll: 0 } });
-  shockwave(card.x, card.y, card.h * 0.3, 140); burst(card.x, card.y, 60, 420, [140, 170, 60], 0.6); impact(card.x, card.y, 140, 0.25);
-  setDetect("🃏 Kartu pecah, terbang ke muka!", "ok", true);
+  shockwave(card.x, card.y, card.h * 0.3, 140); burst(card.x, card.y, 50, 380, [140, 170, 60], 0.6); impact(card.x, card.y, 140, 0.25);
+  setDetect("🃏 Kartu kepotong, terbang ke muka!", "ok", true);
 }
-function slapCard(now){
+function assembleCard(now){
   const f = faceInfo() || card.fallback;
-  Object.assign(card, { state: "melt", t0: now, last: f });
-  cardTrail = [];
-  impact(f.x, f.y, 140, 0.8); shockwave(f.x, f.y, f.h * 0.35, 140);
-  setTimeout(() => shockwave(f.x, f.y, f.h * 0.25, 170), 100);
-  burst(f.x, f.y, 140, 750, [140, 120, 170, 60], 0.9, 1.1);
-  if (!hacker) toggleHacker({ x: f.x, y: f.y });
+  Object.assign(card, { state: "snap", t0: now, last: f });
+  impact(f.x, f.y, 140, 0.5); shockwave(f.x, f.y, f.h * 0.3, 140);
+  burst(f.x, f.y, 70, 450, [140, 120, 170], 0.7);
 }
 function peelCard(){
   const f = faceInfo();
@@ -2385,14 +2331,18 @@ function cardFx(now, dt, fresh){
         if (card.state === "float") card.state = "held";
         const a = cardAnchor(h);
         card.tx = a.x; card.ty = a.y; card.trz = a.rz; card.th = h.size * 1.05;
+        card.spinMode = !!a.spin; card.tip = a.spin ? { x: a.tip.x, y: a.tip.y, ux: a.ux, uy: a.uy } : null;
         cardHist.push({ x: h.palm.x, y: h.palm.y, t: now });
         while (cardHist.length > 1 && now - cardHist[0].t > 160) cardHist.shift();
         const o = cardHist[0], dtv = (now - o.t) / 1000;
         if (dtv > 0.05){ card.vx = (h.palm.x - o.x) / dtv; card.vy = (h.palm.y - o.y) / dtv; }
-        // rapet (sword) dulu minimal 0.25 dtk, terus direnggangin (vee) 2 frame berturut-turut = lepas
+        // pemicu ketat: rapet (sword) minimal 0.5 dtk → renggang LEBAR (≥0.75× panjang telunjuk) 4 frame berturut-turut
         if (h.pair === "sword"){ if (!card.swordT) card.swordT = now; card.veeF = 0; }
-        else if (h.pair === "vee" && card.swordT && now - card.swordT > 250 && now - card.born > 500){ if (++card.veeF >= 2){ launchCard(now); return; } }
-        else if (h.pair !== "vee"){ card.swordT = 0; card.veeF = 0; }
+        else if (h.idx && h.mid && card.swordT && now - card.swordT > 500 && now - card.born > 900 && h.spreadR > 0.75){
+          if (++card.veeF >= 4){ launchCard(now, h); return; }
+        }
+        else if (h.idx && h.mid){ card.veeF = 0; }                             // renggang tanggung: belum dihitung
+        else { card.swordT = 0; card.veeF = 0; }
       } else {
         if (!card.lostT){ card.lostT = now; card.state = "float"; card.swordT = 0; card.veeF = 0; }
         cardHist.length = 0;
@@ -2406,14 +2356,26 @@ function cardFx(now, dt, fresh){
     card.x += (card.tx - card.x) * e; card.y += (card.ty - card.y) * e;
     card.h += (card.th - card.h) * e * 0.5; card.rz = lerpAng(card.rz, card.trz, e);
     // kibas ke samping = kartu muter balik; diem = balik ngadep depan
-    card.spinV = approach(card.spinV, card.state === "held" ? card.vx / (260 * SC) : 0, dt, 5);
+    const spinning = card.state === "held" && card.spinMode;
+    card.spinV = approach(card.spinV, spinning ? 9 : card.state === "held" ? card.vx / (260 * SC) : 0, dt, spinning ? 3 : 5);
     card.spin += card.spinV * dt;
     if (Math.abs(card.spinV) < 0.6) card.spin = approach(card.spin, Math.round(card.spin / 6.283) * 6.283, dt, 5);
     const s0 = Math.min(1, (now - card.born) / 380), se = 1 - Math.pow(1 - s0, 3);
-    card.ry = card.spin + Math.sin(now / 650) * 0.35 + (1 - se) * Math.PI * 3;
-    const fl = card.state === "float", bob = fl ? Math.sin(now / 300) * 6 * SC : 0;
+    card.ry = card.spin + (spinning ? 0 : Math.sin(now / 650) * 0.35) + (1 - se) * Math.PI * 3;
+    const fl = card.state === "float", bob = fl ? Math.sin(now / 300) * 6 * SC : spinning ? Math.sin(now / 220) * 4 * SC : 0;
     const al = fl ? Math.min(1, (2500 - (now - card.lostT)) / 600) : 1;
-    const armed = card.swordT && now - card.swordT > 250;                   // udah kejepit rapet: siap dilepas
+    if (spinning && card.tip){                                              // cincin levitasi di ujung telunjuk
+      const t = card.tip, pz = (now / 500) % 1;
+      ctx.save(); ctx.globalCompositeOperation = "lighter";
+      glowDot(t, 26 * SC, "0,255,140", 0.55);
+      for (const q of [pz, (pz + 0.5) % 1]){
+        ctx.strokeStyle = `rgba(0,255,140,${0.8 * (1 - q)})`; ctx.lineWidth = 2 * SC;
+        ctx.beginPath(); ctx.ellipse(t.x + t.ux * q * card.h * 0.5, t.y + t.uy * q * card.h * 0.5, card.h * (0.18 + q * 0.2), card.h * (0.06 + q * 0.07), Math.atan2(t.uy, t.ux) + Math.PI / 2, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.restore();
+      if (Math.random() < 0.5) addSpark(t.x, t.y, t.ux * 120 * SC + (Math.random() - 0.5) * 60 * SC, t.uy * 120 * SC + (Math.random() - 0.5) * 60 * SC, 0.5, (1.5 + Math.random() * 2) * SC, 140, 1);
+    }
+    const armed = card.swordT && now - card.swordT > 500;                   // udah kejepit rapet: siap dilepas
     paintCard(card.x, card.y + bob, card.h * se, card.rz, card.ry, al, (armed ? 1.6 : 1) + 0.3 * Math.sin(now / 200));
     if (armed){
       const pz = (now / 700) % 1;
@@ -2425,11 +2387,12 @@ function cardFx(now, dt, fresh){
       addSpark(card.x + Math.cos(a) * r * 0.7, card.y + Math.sin(a) * r, (Math.random() - 0.5) * 60 * SC, -(20 + Math.random() * 50) * SC, 0.5, (1.5 + Math.random() * 2) * SC, Math.random() < 0.7 ? 140 : 170, Math.random() < 0.5 ? 0 : 2);
     }
   } else if (card.state === "shatter"){
+    if (fresh){ const h = hands.find(x => x.side === card.side) || hands[0]; if (h && h.idx && h.mid) card.G = gapOf(h); }
+    const G = glide("gap", card.G, dt, 20);
     const T = (now - card.t0) / 1000, f = faceInfo() || card.fallback, F = card.from;
     const fh = f.h, fw = fh * CARD_W / CARD_H, cw0 = F.h * CARD_W / CARD_H, mir = mirrorEl.checked ? -1 : 1;
-    const sw = CARD_W / SH_C, shh = CARD_H / SH_R;
-    // retakan putih sekejap di kartu utuh sebelum pecah
-    if (T < 0.09){
+    const sw = CARD_W / SH_C, shh = CARD_H / SH_R, small = F.h * 0.36;
+    if (T < PH.crack){                                                         // retak
       paintCard(F.x, F.y, F.h, F.rz, 0, 1, 2);
       ctx.save(); ctx.translate(F.x, F.y); ctx.rotate(F.rz); ctx.globalCompositeOperation = "lighter";
       ctx.strokeStyle = "rgba(230,255,240,0.95)"; ctx.lineWidth = 2.5 * SC; ctx.beginPath();
@@ -2437,44 +2400,79 @@ function cardFx(now, dt, fresh){
       for (let r = 1; r < SH_R; r++){ const y = (r / SH_R - 0.5) * F.h; ctx.moveTo(-cw0 / 2, y); ctx.lineTo(cw0 / 2, y + (Math.random() - 0.5) * 8 * SC); }
       ctx.stroke(); ctx.restore();
     } else {
+      const tg = Math.min(1, (T - PH.crack) / PH.gather);
+      const flyStart = PH.crack + PH.gather, left = card.shards.some(p => T - flyStart - p.order * PH.gap < 0);
+      if (left){                                                                // pusaran di celah 2 jari
+        ctx.save(); ctx.globalCompositeOperation = "lighter";
+        glowDot(G, F.h * 0.35 * tg, "0,255,140", 0.45);
+        ctx.strokeStyle = "rgba(0,255,140,0.6)"; ctx.lineWidth = 2 * SC;
+        ctx.beginPath(); ctx.arc(G.x, G.y, F.h * 0.22, now / 120, now / 120 + 2); ctx.stroke();
+        ctx.restore();
+      }
       let done = true;
       for (const p of card.shards){
         const sx0 = F.x + (Math.cos(F.rz) * p.ox * mir * cw0 - Math.sin(F.rz) * p.oy * F.h);
         const sy0 = F.y + (Math.sin(F.rz) * p.ox * mir * cw0 + Math.cos(F.rz) * p.oy * F.h);
-        const ax = sx0 + p.dx * F.h * 0.45 * p.lift, ay = sy0 + p.dy * F.h * 0.45 * p.lift - F.h * 0.15;
-        const tx = f.x + (Math.cos(f.roll) * p.ox * mir * fw - Math.sin(f.roll) * p.oy * fh);
-        const ty = f.y + (Math.sin(f.roll) * p.ox * mir * fw + Math.cos(f.roll) * p.oy * fh);
-        let x, y, sc, rz, glow;
-        const ta = Math.min(1, (T - 0.09) / 0.26);                         // fase melayang
-        if (ta < 1){
-          const e = 1 - Math.pow(1 - ta, 3);
-          x = sx0 + (ax - sx0) * e + Math.sin(now / 120 + p.c * 3) * 3 * SC * e; y = sy0 + (ay - sy0) * e;
-          sc = F.h; rz = F.rz + p.spin * 0.35 * e; glow = 1.4; done = false;
+        const orb = p.a0 + now / 160, rr = F.h * 0.16 * p.rad;
+        if (p.gx == null || T - flyStart - p.order * PH.gap < 0){             // muter di celah jari (posisi terakhir dikunci pas berangkat)
+          p.gx = G.x + Math.cos(orb) * rr; p.gy = G.y + Math.sin(orb) * rr * 0.6; p.gr = orb;
+        }
+        const gx = p.gx, gy = p.gy;
+        const tc = Math.max(0, Math.min(1, (T - flyStart - p.order * PH.gap) / PH.fly));
+        let x, y, sc, rz, sx = 1, glow = 1.3;
+        if (tc <= 0){
+          const e = 1 - Math.pow(1 - tg, 3);
+          x = sx0 + (gx - sx0) * e; y = sy0 + (gy - sy0) * e;
+          sc = F.h + (small - F.h) * e; rz = F.rz + p.spin * e + p.gr * 0.3 * e;
+          done = false;
         } else {
-          const tb = Math.max(0, Math.min(1, (T - 0.35 - p.delay) / 0.55));  // fase terbang & nyusun
-          const e = tb * tb * (3 - 2 * tb), u = 1 - e;
-          const mx = (ax + tx) / 2 + (W / 2 - (ax + tx) / 2) * 0.3, my = Math.min(ay, ty) - fh * 0.35;
-          x = u * u * ax + 2 * u * e * mx + e * e * tx; y = u * u * ay + 2 * u * e * my + e * e * ty;
-          sc = F.h + (fh - F.h) * e; sc *= 1 + Math.sin(Math.PI * e) * 0.45;          // ngegede pas lewat deket kamera
-          rz = F.rz + p.spin * 0.35 + (lerpAng(F.rz + p.spin * 0.35, f.roll, e) - (F.rz + p.spin * 0.35)) + Math.sin(Math.PI * e) * p.spin * 0.6;
-          glow = 1.2 + (1 - e); if (tb < 1) done = false;
-          if (Math.random() < 0.25 * u) addSpark(x, y, (Math.random() - 0.5) * 80 * SC, (Math.random() - 0.5) * 80 * SC, 0.4, (1.5 + Math.random() * 2) * SC, 140, 1);
+          const tx = f.x + (Math.cos(f.roll) * p.ox * mir * fw - Math.sin(f.roll) * p.oy * fh);
+          const ty = f.y + (Math.sin(f.roll) * p.ox * mir * fw + Math.cos(f.roll) * p.oy * fh);
+          const e = tc * tc * (3 - 2 * tc), u = 1 - e;
+          const mx = (gx + tx) / 2 + (W / 2 - (gx + tx) / 2) * 0.35, my = Math.min(gy, ty) - fh * 0.3;
+          x = u * u * gx + 2 * u * e * mx + e * e * tx; y = u * u * gy + 2 * u * e * my + e * e * ty;
+          sc = (small + (fh - small) * e) * (1 + Math.sin(Math.PI * e) * 1.3);        // ngegede pas lewat deket kamera
+          const r0 = F.rz + p.spin + p.gr * 0.3;
+          rz = lerpAng(r0, f.roll, e) + Math.sin(Math.PI * e) * p.spin * 0.4;
+          sx = Math.cos(Math.sin(Math.PI * e) * p.flip * Math.PI);                    // kepingan kebalik-balik 3D di udara
+          glow = 1 + (1 - e) * 0.8;
+          if (tc < 1) done = false;
+          if (tc < 1 && Math.random() < 0.3) addSpark(x, y, (Math.random() - 0.5) * 90 * SC, (Math.random() - 0.5) * 90 * SC, 0.4, (1.5 + Math.random() * 2) * SC, 140, 1);
         }
         const dw = sc * CARD_W / CARD_H / SH_C, dh = sc / SH_R;
-        ctx.save(); ctx.translate(x, y); ctx.rotate(rz); ctx.scale(mir, 1);
-        ctx.shadowBlur = 16 * SC * glow; ctx.shadowColor = "rgba(0,255,140,0.9)";
-        ctx.drawImage(cardFront, p.c * sw, p.r * shh, sw, shh, -dw / 2, -dh / 2, dw + 0.8, dh + 0.8);
+        ctx.save(); ctx.translate(x, y); ctx.rotate(rz); ctx.scale(mir * Math.max(0.06, Math.abs(sx)), 1);
+        ctx.shadowBlur = 14 * SC * glow; ctx.shadowColor = "rgba(0,255,140,0.9)";
+        ctx.drawImage(sx >= 0 ? cardFront : cardBack, p.c * sw, p.r * shh, sw, shh, -dw / 2, -dh / 2, dw + 0.8, dh + 0.8);
         ctx.shadowBlur = 0; ctx.globalCompositeOperation = "lighter";
-        ctx.strokeStyle = `rgba(150,255,200,${0.5 * Math.min(1, glow - 0.6)})`; ctx.lineWidth = 1.5 * SC; ctx.strokeRect(-dw / 2, -dh / 2, dw, dh);
+        ctx.strokeStyle = `rgba(150,255,200,${0.35 * glow})`; ctx.lineWidth = 1.5 * SC; ctx.strokeRect(-dw / 2, -dh / 2, dw, dh);
         ctx.restore();
       }
-      if (done){ slapCard(now); return; }
+      if (done){ assembleCard(now); return; }
     }
-  } else if (card.state === "melt"){
-    const t = (now - card.t0) / 450;
+  } else if (card.state === "snap"){                                         // kartu utuh nongol di depan muka
+    const t = (now - card.t0) / 1000 / PH.snap, f = faceInfo() || card.last;
+    paintCard(f.x, f.y, f.h * (1 + 0.06 * Math.sin(Math.PI * Math.min(1, t))), f.roll, 0, 1, 2.2 - Math.min(1, t));
+    if (t >= 1){ Object.assign(card, { state: "merge", t0: now }); if (!hacker) toggleHacker({ x: f.x, y: f.y }); }
+  } else if (card.state === "merge"){                                        // kartu nyatu ke muka: garis scan nyapu ke bawah
+    const t = Math.min(1, (now - card.t0) / 1000 / PH.merge), f = faceInfo() || card.last;
     if (t >= 1){ card = null; return; }
-    const f = faceInfo() || card.last;
-    paintCard(f.x, f.y, f.h * (1 + t * 0.18), f.roll, 0, (1 - t) * (1 - t), 1.6 * (1 - t));
+    const h = f.h, w = h * CARD_W / CARD_H, e = t * t * (3 - 2 * t), ys = -h / 2 + e * h;
+    ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.roll);
+    ctx.beginPath(); ctx.rect(-w / 2 - 2, ys, w + 4, h / 2 - ys + 2); ctx.clip();
+    ctx.rotate(-f.roll); ctx.translate(-f.x, -f.y);
+    paintCard(f.x, f.y, h, f.roll, 0, 1 - e * 0.25, 1.2);
+    ctx.restore();
+    ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.roll); ctx.globalCompositeOperation = "lighter";
+    const g = ctx.createLinearGradient(0, ys - 30 * SC, 0, ys);
+    g.addColorStop(0, "rgba(0,255,140,0)"); g.addColorStop(1, "rgba(0,255,140,0.55)");
+    ctx.fillStyle = g; ctx.fillRect(-w / 2, ys - 30 * SC, w, 30 * SC);
+    ctx.strokeStyle = "rgba(220,255,235,0.95)"; ctx.lineWidth = 3 * SC;
+    ctx.beginPath(); ctx.moveTo(-w / 2 - 10 * SC, ys); ctx.lineTo(w / 2 + 10 * SC, ys); ctx.stroke();
+    ctx.restore();
+    for (let i = 0; i < 4; i++){                                             // serpihan kartu kesedot ke muka
+      const lx = (Math.random() - 0.5) * w, c = Math.cos(f.roll), s2 = Math.sin(f.roll);
+      addSpark(f.x + lx * c - ys * s2, f.y + lx * s2 + ys * c, -lx * c * 2, -40 * SC, 0.45, (1.5 + Math.random() * 2) * SC, Math.random() < 0.7 ? 140 : 170, 2);
+    }
   } else if (card.state === "peel"){
     const t = (now - card.t0) / 750;
     if (t >= 1){ card = null; return; }
