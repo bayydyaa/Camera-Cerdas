@@ -109,6 +109,7 @@
     <p class="note" id="modeNote"></p>
     <p class="note">🤙 Tahan jempol + kelingking = kartu hacker muncul. ☝️ = kartu melayang muter di atas telunjuk. Jepit pakai telunjuk + tengah dirapetin (kartu ikut arah jari), tahan sebentar, terus renggangin lebar = kartu kepotong, ngumpul di celah jari, melayang ke depan muka, nyusun jadi kartu & nyatu ke muka. 🤙 lagi = kartu copot. Bisa barengan sama mode apa aja.</p>
     <label class="check"><input type="checkbox" id="mirror" checked> Cerminin layar (biar gambar & tulisan kebaca)</label>
+    <label class="check"><input type="checkbox" id="diag"> Diagnostik (D): liat apa yang kebaca AI. Matiin pas live!</label>
   </div>
 
   <dl class="keys">
@@ -127,6 +128,7 @@
     <dt>0–5</dt><dd>ganti mode lewat keyboard</dd>
     <dt>🤙 tahan</dt><dd>kartu hacker muncul. ☝️ = kartu muter di jari. 2 jari rapet → renggangin lebar = kartu ke muka. 🤙 lagi = copot</dd>
     <dt>G</dt><dd>filter muka langsung nyala / mati (tanpa kartu)</dd>
+    <dt>D</dt><dd>diagnostik: kerangka tangan, skor jari, fps, cahaya</dd>
     <dt>H</dt><dd>sembunyiin / munculin panel</dd>
     <dt>F</dt><dd>layar penuh</dd>
   </dl>
@@ -703,7 +705,18 @@ const ang = (a, b, c) => {
   const n = Math.hypot(ux, uy, uz) * Math.hypot(vx, vy, vz) || 1;
   return Math.acos(Math.max(-1, Math.min(1, (ux * vx + uy * vy + uz * vz) / n))) * 57.2958;
 };
-const ext = (w, mcp, pip, dip, tip) => ang(w[mcp], w[pip], w[dip]) > 150 && ang(w[pip], w[dip], w[tip]) > 135;
+const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
+// Skor kelurusan jari 0..1: sendi tengah (paling penting) + sendi ujung + seberapa jauh ujung dari pergelangan.
+// Jari setengah ditekuk dapet skor tengah, jadi nggak kedip-kedip lurus/bengkok kayak pakai ambang kaku.
+const extScore = (w, mcp, pip, dip, tip) =>
+  clamp01((ang(w[mcp], w[pip], w[dip]) - 110) / 55) * 0.55 +
+  clamp01((ang(w[pip], w[dip], w[tip]) - 100) / 55) * 0.15 +
+  clamp01((d3(w[0], w[tip]) / (d3(w[0], w[pip]) || 1) - 0.95) / 0.3) * 0.3;
+const thumbScore = w =>
+  clamp01((ang(w[1], w[2], w[3]) - 125) / 40) * 0.35 +
+  clamp01((ang(w[2], w[3], w[4]) - 120) / 40) * 0.25 +
+  clamp01((d3(w[4], w[5]) / (d3(w[0], w[5]) || 1) - 0.45) / 0.3) * 0.4;
+const F_ON = 0.62, F_OFF = 0.42;      // nyala kalau > 0.62, baru mati kalau < 0.42 (zona tengah = tetap)
 const fingerHist = {}, lmF = {};
 const pairMem = {};
 // "sword" = telunjuk + tengah dirapetin, "vee" = renggang (✌️). Ada zona tengah biar nggak kedip-kedip.
@@ -732,12 +745,14 @@ function readHands(){
     seen.add(side);
     const top = (res.gestures?.[i] || [])[0];
     const name = top?.categoryName || "", score = top?.score || 0;
-    // jempol "keluar": ruasnya lurus dan ujungnya jauh dari pangkal telunjuk
-    const thumbOut = ang(wl[1], wl[2], wl[3]) > 145 && ang(wl[2], wl[3], wl[4]) > 140 && d3(wl[4], wl[5]) > d3(wl[0], wl[5]) * 0.6;
-    const raw = [ext(wl, 5, 6, 7, 8), ext(wl, 9, 10, 11, 12), ext(wl, 13, 14, 15, 16), ext(wl, 17, 18, 19, 20), thumbOut];
-    const hist = (fingerHist[side] ??= []);
-    hist.push(raw); if (hist.length > 5) hist.shift();
-    const f = [0, 1, 2, 3, 4].map(k => hist.reduce((n, s) => n + (s[k] ? 1 : 0), 0) * 2 > hist.length);
+    const sc = [extScore(wl, 5, 6, 7, 8), extScore(wl, 9, 10, 11, 12), extScore(wl, 13, 14, 15, 16), extScore(wl, 17, 18, 19, 20), thumbScore(wl)];
+    // hysteresis + harus konsisten 2 frame baru ganti status → stabil tapi cuma telat 1 frame
+    const st = (fingerHist[side] ??= { on: [false, false, false, false, false], pend: [0, 0, 0, 0, 0] });
+    sc.forEach((v, k) => {
+      const want = st.on[k] ? v > F_OFF : v > F_ON;
+      if (want !== st.on[k]){ if (++st.pend[k] >= 2){ st.on[k] = want; st.pend[k] = 0; } } else st.pend[k] = 0;
+    });
+    const f = st.on;
     const [idx, mid, ring, pink, thumb] = f;
     let count = 0;
     if (idx && !mid && !ring && !pink) count = 1;
@@ -753,13 +768,14 @@ function readHands(){
       return { x: f[0].f(lm[k].x * W, tt), y: f[1].f(lm[k].y * H, tt) };
     };
     return {
-      lm, wl, name, score, idx, mid, ring, pink, count, side, pair: pairState(side, idx, mid, ring, pink, wl),
+      lm, wl, name, score, idx, mid, ring, pink, thumb, count, side, pair: pairState(side, idx, mid, ring, pink, wl),
       spreadR: idx && mid ? d3(wl[8], wl[12]) / (d3(wl[5], wl[8]) || 1) : 0,   // seberapa renggang telunjuk–tengah
-      open: (idx && mid && ring && pink) || (name === "Open_Palm" && score > 0.6),
-      fist: (!idx && !mid && !ring && !pink) || (name === "Closed_Fist" && score > 0.6),
-      thumbDown: name === "Thumb_Down" && score > 0.6,
+      open: (idx && mid && ring && pink) || (name === "Open_Palm" && score > 0.7),
+      fist: (!idx && !mid && !ring && !pink) || (name === "Closed_Fist" && score > 0.7 && !idx && !mid),
+      thumbDown: name === "Thumb_Down" && score > 0.7 && !idx && !mid && !ring,   // model + jari kita harus setuju
       shaka: thumb && pink && !idx && !mid && !ring,          // 🤙
-      midNow: raw[1],                                         // jari tengah frame ini (tanpa debounce)
+      midNow: sc[1] > F_ON,                                   // jari tengah frame ini (tanpa nunggu konfirmasi)
+      sc,                                                     // skor tiap jari (buat diagnostik)
       size: Math.hypot((lm[0].x - lm[9].x) * W, (lm[0].y - lm[9].y) * H),   // piksel asli (x dan y beda skala)
       center: fp(9),
       palm: palmC,
@@ -769,6 +785,7 @@ function readHands(){
   });
   for (const k in fingerHist) if (!seen.has(k)){ delete fingerHist[k]; delete pairMem[k]; }
   for (const k in lmF) if (!seen.has(k)) delete lmF[k];
+  trackFrames++;
   return true;
 }
 
@@ -928,17 +945,20 @@ const MODE_COUNT = 5, HOLD = 0.8;
 const MODE_HUE = { 0: 45, 1: 310, 2: 190, 3: 275, 4: 160, 5: 200 };
 const MODE_NAME = { 0: "Efek mati", 1: "Gambar di udara", 2: "Petir & Segel", 3: "Bola Plasma", 4: "Portal Filter", 5: "Lubang Hitam" };
 let actCand = 0, actT0 = 0, actProg = 0, actHand = null, actLatch = false;
+const GRACE = 200;                                   // tracking kedip < 0.2 dtk nggak ngereset tahan gesture
+const usable = x => x.size > 50 * SC;                // tangan kejauhan / kekecilan = abaikan buat gesture tahan
+let actSeen = 0, actStart = null, shakaSeen = 0;
 function activation(now, fresh){
   if (!fresh) return;
   // 🤙 tahan = muka hacker nyala/mati (harus dilepas dulu sebelum bisa toggle lagi)
-  const sh = hands.find(x => x.shaka);
+  const sh = hands.find(x => x.shaka && usable(x));
   if (sh){
-    shakaHand = sh;
+    shakaHand = sh; shakaSeen = now;
     if (!shakaLatch){
       if (!shakaT0) shakaT0 = now;
       if (now - shakaT0 >= HOLD * 1000){ shakaAction(sh); shakaLatch = true; shakaT0 = 0; }
     }
-  } else { shakaT0 = 0; shakaLatch = false; shakaHand = null; }
+  } else if (now - shakaSeen > GRACE){ shakaT0 = 0; shakaLatch = false; shakaHand = null; }
   if (cardBusy()) actLatch = true;                          // lagi megang kartu: jari jangan ganti mode
   if (actLatch){                                            // ...dan habis dilempar, tunggu bentuk jari dilepas dulu
     if (!cardBusy() && !hands.some(x => x.count >= 1 || x.thumbDown)) actLatch = false;
@@ -946,16 +966,21 @@ function activation(now, fresh){
   }
   let want = 0, h = null;
   if (mode === 0){
-    h = hands.find(x => x.count >= 1 && x.count <= MODE_COUNT);
+    h = hands.find(x => x.count >= 1 && x.count <= MODE_COUNT && usable(x));
     if (h) want = h.count;
   } else {
-    h = hands.find(x => x.thumbDown);
+    h = hands.find(x => x.thumbDown && usable(x));
     if (h) want = -1;
   }
   if (want && want === actCand){
-    actHand = h; actProg = (now - actT0) / 1000 / HOLD;
-    if (actProg >= 1){ setMode(want === -1 ? 0 : want, true); actCand = 0; actProg = 0; }
-  } else { actCand = want; actT0 = now; actProg = 0; actHand = h; }
+    actHand = h; actSeen = now;
+    // tangan lagi gerak (bukan sengaja nahan gesture) → progres mulai ulang
+    if (actStart && dist(h.center, actStart) > h.size * 0.8){ actT0 = now; actStart = { ...h.center }; }
+    actProg = (now - actT0) / 1000 / HOLD;
+    if (actProg >= 1){ setMode(want === -1 ? 0 : want, true); actCand = 0; actProg = 0; actStart = null; }
+  } else if (actCand && now - actSeen < GRACE){
+    // kedip sebentar (tangan ilang / jari salah kebaca 1-2 frame): progres jangan direset
+  } else { actCand = want; actT0 = now; actSeen = now; actProg = 0; actHand = h; actStart = h ? { ...h.center } : null; }
 }
 let ringGhost = null;
 function drawActivation(now, dt){
@@ -1093,7 +1118,7 @@ function mode1(now, dt, fresh){
     const h = hands.find(x => x.idx) || hands[0];
     if (h){
       fistFrames = h.fist ? fistFrames + 1 : 0;
-      if (fistFrames >= 2 && strokes.some(s => s.pts.length > 2)){ releaseDrawing(); fistFrames = 0; }
+      if (fistFrames >= 3 && strokes.some(s => s.pts.length > 2)){ releaseDrawing(); fistFrames = 0; }
       // ☝️ = gambar, ✌️ = berhenti (kursor doang), ✊ = ledak
       const canStart = h.idx && !h.mid && !h.ring && !h.pink;
       const canKeep = h.idx && !h.mid;
@@ -1195,7 +1220,7 @@ function mode3(now, dt, fresh){
       fist3 = 0;
     } else if (h && h.fist && orb){
       fist3++;
-      if (fist3 >= 2 && orb.charge > 0.35) detonate();
+      if (fist3 >= 3 && orb.charge > 0.35) detonate();
     }
   }
   if (!orb) return;
@@ -1886,7 +1911,7 @@ function mode5(now, dt, fresh){
     if (!hole){
       if (two && tipMid) spinUpdate(tipMid, now);
     } else if (!hole.closing && hands.some(h => h.fist)){
-      if (++hole.fistF >= 2) hole.closing = true;
+      if (++hole.fistF >= 3) hole.closing = true;
     } else if (!hands.some(h => h.fist)) hole.fistF = 0;
   }
   if (spin && !hole){
@@ -2283,7 +2308,7 @@ function poofCard(){
 /* Renggangin 2 jari: kartu kepotong → potongan ngumpul muter di celah 2 jari → melayang satu-satu ke depan muka
    → nyusun jadi kartu utuh → kartu "nyatu" ke muka (garis scan nyapu, di baliknya filter muncul). */
 const SH_C = 3, SH_R = 4, SH_N = SH_C * SH_R;
-const PH = { crack: 0.12, gather: 0.32, gap: 0.035, fly: 0.62, snap: 0.18, merge: 0.65 };
+const PH = { crack: 0.12, gather: 0.32, gap: 0.05, fly: 0.75, snap: 0.18, merge: 0.65 };
 const gapOf = h => ({ x: (h.p8.x + h.p12.x) / 2, y: (h.p8.y + h.p12.y) / 2 });
 function launchCard(now, h){
   const order = [...Array(SH_N).keys()].sort(() => Math.random() - 0.5), sh = [];
@@ -2429,9 +2454,13 @@ function cardFx(now, dt, fresh){
           const tx = f.x + (Math.cos(f.roll) * p.ox * mir * fw - Math.sin(f.roll) * p.oy * fh);
           const ty = f.y + (Math.sin(f.roll) * p.ox * mir * fw + Math.cos(f.roll) * p.oy * fh);
           const e = tc * tc * (3 - 2 * tc), u = 1 - e;
-          const mx = (gx + tx) / 2 + (W / 2 - (gx + tx) / 2) * 0.35, my = Math.min(gy, ty) - fh * 0.3;
+          // jalur lewat tengah layar = lewat persis di depan lensa
+          const mx = W / 2 + (tx - W / 2) * 0.15 + (p.ox * mir) * W * 0.12, my = H * 0.5 + p.oy * H * 0.12;
           x = u * u * gx + 2 * u * e * mx + e * e * tx; y = u * u * gy + 2 * u * e * my + e * e * ty;
-          sc = (small + (fh - small) * e) * (1 + Math.sin(Math.PI * e) * 1.3);        // ngegede pas lewat deket kamera
+          const peak = Math.pow(Math.sin(Math.PI * e), 1.4);
+          sc = small + (fh - small) * e + peak * H * 2.6;                               // kepingan segede layar pas di depan kamera
+          if (!p.whoosh && e > 0.45){ p.whoosh = true; shakeAmt = Math.max(shakeAmt, 5 * SC); }
+          p.near = peak;
           const r0 = F.rz + p.spin + p.gr * 0.3;
           rz = lerpAng(r0, f.roll, e) + Math.sin(Math.PI * e) * p.spin * 0.4;
           sx = Math.cos(Math.sin(Math.PI * e) * p.flip * Math.PI);                    // kepingan kebalik-balik 3D di udara
@@ -2440,8 +2469,10 @@ function cardFx(now, dt, fresh){
           if (tc < 1 && Math.random() < 0.3) addSpark(x, y, (Math.random() - 0.5) * 90 * SC, (Math.random() - 0.5) * 90 * SC, 0.4, (1.5 + Math.random() * 2) * SC, 140, 1);
         }
         const dw = sc * CARD_W / CARD_H / SH_C, dh = sc / SH_R;
+        const near = tc > 0 && tc < 1 ? p.near || 0 : 0;
         ctx.save(); ctx.translate(x, y); ctx.rotate(rz); ctx.scale(mir * Math.max(0.06, Math.abs(sx)), 1);
-        ctx.shadowBlur = 14 * SC * glow; ctx.shadowColor = "rgba(0,255,140,0.9)";
+        ctx.globalAlpha = 1 - near * 0.3;                                             // deket lensa = agak tembus (kayak blur)
+        if (near < 0.5){ ctx.shadowBlur = 14 * SC * glow; ctx.shadowColor = "rgba(0,255,140,0.9)"; }
         ctx.drawImage(sx >= 0 ? cardFront : cardBack, p.c * sw, p.r * shh, sw, shh, -dw / 2, -dh / 2, dw + 0.8, dh + 0.8);
         ctx.shadowBlur = 0; ctx.globalCompositeOperation = "lighter";
         ctx.strokeStyle = `rgba(150,255,200,${0.35 * glow})`; ctx.lineWidth = 1.5 * SC; ctx.strokeRect(-dw / 2, -dh / 2, dw, dh);
@@ -2482,6 +2513,71 @@ function cardFx(now, dt, fresh){
   }
 }
 
+/* ================= 🩺 Diagnostik: biar keliatan masalahnya di kamera atau di web =================
+   Kerangka tangan + skor tiap jari + gesture yang kebaca + fps kamera/tracking + cahaya ruangan. */
+const diagEl = $("#diag");
+let trackFrames = 0, trackFps = 0, trackT = 0, lum = -1, lumT = 0;
+const [lumC, lumX] = mk(); lumC.width = 32; lumC.height = 18;
+const HAND_BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+function gestureName(h){
+  if (h.shaka) return "🤙 shaka";
+  if (h.thumbDown) return "👎 jempol bawah";
+  if (h.fist) return "✊ kepal";
+  if (h.count === 2) return h.pair === "sword" ? "✌️ rapet" : h.pair === "vee" ? "✌️ renggang" : "✌️ tanggung";
+  return ["? nggak jelas", "☝️ 1 jari", "", "3 jari", "🖐️ 4 jari", "🤟 telunjuk+kelingking"][h.count] || "?";
+}
+function drawDiag(now){
+  if (now - trackT > 1000){ trackFps = Math.round(trackFrames * 1000 / (now - trackT)); trackFrames = 0; trackT = now; }
+  if (now - lumT > 500){
+    lumT = now; lumX.drawImage(video, 0, 0, 32, 18);
+    const d = lumX.getImageData(0, 0, 32, 18).data; let s = 0;
+    for (let i = 0; i < d.length; i += 4) s += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    lum = Math.round(s / (d.length / 4));
+  }
+  const camFps = Math.round(stream?.getVideoTracks()[0]?.getSettings?.().frameRate || 0);
+  ctx.save(); ctx.lineCap = "round";
+  for (const h of hands){
+    // kerangka tangan yang kebaca AI
+    ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.lineWidth = 2 * SC; ctx.beginPath();
+    for (const [a, b] of HAND_BONES){ ctx.moveTo(h.lm[a].x * W, h.lm[a].y * H); ctx.lineTo(h.lm[b].x * W, h.lm[b].y * H); }
+    ctx.stroke();
+    for (let i = 0; i < 21; i++){ ctx.fillStyle = i % 4 === 0 && i ? "#ff4fd8" : "#5ce1ff"; ctx.fillRect(h.lm[i].x * W - 3 * SC, h.lm[i].y * H - 3 * SC, 6 * SC, 6 * SC); }
+    // 5 bar skor jari di bawah pergelangan: J(empol) T(elunjuk) Te(ngah) M(anis) K(elingking)
+    const bx = h.lm[0].x * W, by = h.lm[0].y * H + 30 * SC, bw = 14 * SC, bh = 46 * SC;
+    const order = [4, 0, 1, 2, 3], labels = ["J", "T", "Te", "M", "K"], on = [h.thumb, h.idx, h.mid, h.ring, h.pink];
+    order.forEach((k, i) => {
+      const x = bx + (i - 2) * (bw + 5 * SC) * (mirrorEl.checked ? -1 : 1) - bw / 2;
+      ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillRect(x, by, bw, bh);
+      ctx.fillStyle = on[i] ? "#7dffb0" : h.sc[k] > F_OFF ? "#ffb547" : "#ff5c7a";
+      ctx.fillRect(x, by + bh * (1 - h.sc[k]), bw, bh * h.sc[k]);
+      ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.fillRect(x, by + bh * (1 - F_ON), bw, 1.5 * SC);
+      htext(labels[i], x + bw / 2, by + bh + 12 * SC, 11, "#fff", 1, "center");
+    });
+    htext(`${gestureName(h)}  ·  ${Math.round(h.size)}px${h.size < 50 * SC ? " (kejauhan)" : ""}`, bx, by - 16 * SC, 15, "#fff", 1, "center");
+  }
+  ctx.restore();
+  // panel info di pojok kiri-atas layar
+  const warn = [];
+  if (camFps && camFps < 24) warn.push("⚠ Kamera < 24fps: ruangan kurang terang / kamera lagi dipake app lain");
+  if (trackFps && trackFps < 18) warn.push("⚠ Tracking lambat: tutup app berat, turunin resolusi OBS");
+  if (lum >= 0 && lum < 70) warn.push("⚠ Ruangan gelap: tambah lampu dari DEPAN muka/tangan");
+  if (lum > 200) warn.push("⚠ Kelewat terang / backlight: jangan ngadep jendela");
+  if (hands.some(h => h.size < 50 * SC)) warn.push("⚠ Tangan kejauhan dari kamera: majuin dikit");
+  const lines = [
+    `KAMERA   ${W}x${H} @ ${camFps || "?"} fps`,
+    `TRACKING ${trackFps} fps · tangan: ${hands.length}`,
+    `RENDER   ${Math.round(1 / frameAvg)} fps`,
+    `CAHAYA   ${lum < 0 ? "?" : lum} ${lum < 70 ? "(gelap)" : lum > 200 ? "(silau)" : "(oke)"}`,
+    `MODE     ${mode} · ${MODE_NAME[mode]}`,
+    ...warn
+  ];
+  const x = mirrorEl.checked ? W - 16 * SC : 16 * SC, y0 = 24 * SC;
+  ctx.save(); ctx.fillStyle = "rgba(0,0,0,0.6)";
+  const pw = 680 * SC; ctx.fillRect(mirrorEl.checked ? x - pw + 8 * SC : x - 8 * SC, y0 - 16 * SC, pw, lines.length * 22 * SC + 12 * SC);
+  ctx.restore();
+  lines.forEach((t, i) => htext(t, x, y0 + i * 22 * SC, 15, t.startsWith("⚠") ? "#ffb547" : "#7dffb0", 1));
+}
+
 /* ================= Main loop ================= */
 let prev = performance.now(), frameAvg = 1 / 60;
 function loop(now){
@@ -2497,6 +2593,7 @@ function loop(now){
     ctx.drawImage(video, 0, 0, W, H);
     drawHacker(now, dt, true);
     handEffects(now, dt);
+    if (diagEl.checked) drawDiag(now);
     if (segmenter && ++warmTick % 20 === 0) readMask();
   } else if (state === "hidden"){
     drawBg(ctx, W, H);
@@ -2550,6 +2647,7 @@ addEventListener("keydown", e => {
   else if (e.key === "p" || e.key === "P") nextFilter(-1);
   else if (e.key === "c" || e.key === "C"){ strokes = []; curStroke = null; }
   else if (e.key === "h" || e.key === "H") document.body.classList.toggle("clean");
+  else if (e.key === "d" || e.key === "D"){ const d = $("#diag"); d.checked = !d.checked; }
   else if (e.key === "g" || e.key === "G"){ card = null; cardTrail = []; toggleHacker(); }
   else if (e.key === "f" || e.key === "F"){
     if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {});
