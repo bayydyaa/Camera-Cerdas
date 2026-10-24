@@ -107,6 +107,7 @@
       <label><input type="radio" name="mode" value="5"> Mode 5 🕳️ Lubang hitam</label>
     </div>
     <p class="note" id="modeNote"></p>
+    <p class="note">🤙 Tahan jempol + kelingking = muka hacker (face scan) nyala / mati. Bisa barengan sama mode apa aja.</p>
     <label class="check"><input type="checkbox" id="mirror" checked> Cerminin layar (biar gambar & tulisan kebaca)</label>
   </div>
 
@@ -124,6 +125,8 @@
     <dt>C</dt><dd>hapus gambar (Mode 1)</dd>
     <dt>👎 tahan</dt><dd>matiin mode</dd>
     <dt>0–5</dt><dd>ganti mode lewat keyboard</dd>
+    <dt>🤙 tahan</dt><dd>muka hacker nyala / mati (di mode apa aja)</dd>
+    <dt>G</dt><dd>muka hacker lewat keyboard</dd>
     <dt>H</dt><dd>sembunyiin / munculin panel</dd>
     <dt>F</dt><dd>layar penuh</dd>
   </dl>
@@ -216,7 +219,7 @@ let maskImg = null, conf = null, smallPix = null, noiseF = null, maskFresh = tru
 
 let stream = null, running = false, bgReady = false;
 let state = "visible", animStart = 0, countdown = 0, recLeft = 0, quality = 1, capturing = false;
-let segmenter = null, gesture = null;
+let segmenter = null, gesture = null, makeTask = null, FaceLandmarkerCls = null;
 
 /* ================= Start ================= */
 btnStart.onclick = async () => {
@@ -293,16 +296,18 @@ async function importVision(){
 }
 async function loadAI(){
   try{
-    const { FilesetResolver, ImageSegmenter, GestureRecognizer } = await importVision();
+    const { FilesetResolver, ImageSegmenter, GestureRecognizer, FaceLandmarker } = await importVision();
     const files = await FilesetResolver.forVisionTasks(`${MP_BASE}/wasm`);
     const make = async (Cls, opts) => {
       try { return await Cls.createFromOptions(files, { ...opts, baseOptions: { ...opts.baseOptions, delegate: "GPU" } }); }
       catch { return await Cls.createFromOptions(files, { ...opts, baseOptions: { ...opts.baseOptions, delegate: "CPU" } }); }
     };
+    makeTask = make; FaceLandmarkerCls = FaceLandmarker;
     segmenter = await make(ImageSegmenter, { baseOptions: { modelAssetPath: SEG_URL }, runningMode: "VIDEO", outputConfidenceMasks: true, outputCategoryMask: false });
     gesture = await make(GestureRecognizer, { baseOptions: { modelAssetPath: GEST_URL }, runningMode: "VIDEO", numHands: 2,
       minHandDetectionConfidence: 0.6, minHandPresenceConfidence: 0.6, minTrackingConfidence: 0.6 });
     lastMaskVT = -1; maskFresh = true; readMask();
+    loadFace();                                   // muat di belakang, dipakai pas 🤙
     setStatus(bgReady ? "Siap! Jentik buat hilang." : "AI siap. Sekarang rekam ruangan kosong dulu.");
   }catch(e){
     console.error(e);
@@ -526,6 +531,7 @@ btnToggle.onclick = toggle;
 /* Darurat pas live: langsung keliatan lagi + semua efek mati. */
 function panicReset(){
   setMode(0); clearHandState();
+  if (hacker){ hacker = false; hackerOffT = -1e9; } hackerAmt = 0;
   state = "visible"; dust.length = 0; sparks.length = 0; waves.length = 0; bursts.length = 0;
   modeFlash = null; ringGhost = null; flashes.length = 0; shakeAmt = 0;
   setStatus("Reset darurat: lu keliatan, semua efek mati.");
@@ -726,11 +732,13 @@ function readHands(){
     seen.add(side);
     const top = (res.gestures?.[i] || [])[0];
     const name = top?.categoryName || "", score = top?.score || 0;
-    const raw = [ext(wl, 5, 6, 7, 8), ext(wl, 9, 10, 11, 12), ext(wl, 13, 14, 15, 16), ext(wl, 17, 18, 19, 20)];
+    // jempol "keluar": ruasnya lurus dan ujungnya jauh dari pangkal telunjuk
+    const thumbOut = ang(wl[1], wl[2], wl[3]) > 145 && ang(wl[2], wl[3], wl[4]) > 140 && d3(wl[4], wl[5]) > d3(wl[0], wl[5]) * 0.6;
+    const raw = [ext(wl, 5, 6, 7, 8), ext(wl, 9, 10, 11, 12), ext(wl, 13, 14, 15, 16), ext(wl, 17, 18, 19, 20), thumbOut];
     const hist = (fingerHist[side] ??= []);
     hist.push(raw); if (hist.length > 5) hist.shift();
-    const f = [0, 1, 2, 3].map(k => hist.reduce((n, s) => n + (s[k] ? 1 : 0), 0) * 2 > hist.length);
-    const [idx, mid, ring, pink] = f;
+    const f = [0, 1, 2, 3, 4].map(k => hist.reduce((n, s) => n + (s[k] ? 1 : 0), 0) * 2 > hist.length);
+    const [idx, mid, ring, pink, thumb] = f;
     let count = 0;
     if (idx && !mid && !ring && !pink) count = 1;
     else if (idx && mid && !ring && !pink) count = 2;
@@ -749,6 +757,7 @@ function readHands(){
       open: (idx && mid && ring && pink) || (name === "Open_Palm" && score > 0.6),
       fist: (!idx && !mid && !ring && !pink) || (name === "Closed_Fist" && score > 0.6),
       thumbDown: name === "Thumb_Down" && score > 0.6,
+      shaka: thumb && pink && !idx && !mid && !ring,          // 🤙
       size: Math.hypot((lm[0].x - lm[9].x) * W, (lm[0].y - lm[9].y) * H),   // piksel asli (x dan y beda skala)
       center: fp(9),
       palm: palmC,
@@ -918,6 +927,15 @@ const MODE_HUE = { 0: 45, 1: 310, 2: 190, 3: 275, 4: 160, 5: 200 };
 let actCand = 0, actT0 = 0, actProg = 0, actHand = null;
 function activation(now, fresh){
   if (!fresh) return;
+  // 🤙 tahan = muka hacker nyala/mati (harus dilepas dulu sebelum bisa toggle lagi)
+  const sh = hands.find(x => x.shaka);
+  if (sh){
+    shakaHand = sh;
+    if (!shakaLatch){
+      if (!shakaT0) shakaT0 = now;
+      if (now - shakaT0 >= HOLD * 1000){ toggleHacker(sh.center); shakaLatch = true; shakaT0 = 0; }
+    }
+  } else { shakaT0 = 0; shakaLatch = false; shakaHand = null; }
   let want = 0, h = null;
   if (mode === 0){
     h = hands.find(x => x.count >= 1 && x.count <= MODE_COUNT);
@@ -957,6 +975,17 @@ function drawActivation(now, dt){
     ctx.arc(c.x, c.y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ap); ctx.stroke();
     ctx.restore();
     label(actCand === -1 ? "Matiin mode" : `Mode ${actCand}`, c.x, c.y - r - 24 * SC, `hsl(${hue},100%,72%)`, Math.min(1, ap * 1.5));
+  }
+  if (shakaT0 && shakaHand){
+    const sp = Math.min(1, (now - shakaT0) / 1000 / HOLD);
+    if (sp > 0.1){
+      const c = glide("shaka", shakaHand.center, dt, 18), r = 70 * SC;
+      ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineCap = "round"; ctx.lineWidth = 6 * SC;
+      ctx.strokeStyle = "rgba(0,255,140,0.25)"; ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = "rgba(0,255,140,0.95)"; ctx.beginPath(); ctx.arc(c.x, c.y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * sp); ctx.stroke();
+      ctx.restore();
+      label(hacker ? "Hacker OFF" : "Hacker ON", c.x, c.y - r - 24 * SC, "rgb(120,255,180)", Math.min(1, sp * 1.5));
+    }
   }
   if (modeFlash){
     const k = (now - modeFlash.t) / 1200;
@@ -1852,7 +1881,7 @@ function mode5(now, dt, fresh){
 
 /* While vanishing/hidden: no new hand input, effects wind down on their own. */
 function handEffectsIdle(now, dt){
-  hands = []; victory = []; actCand = 0; actProg = 0; drawing = false;
+  hands = []; victory = []; actCand = 0; actProg = 0; drawing = false; shakaT0 = 0; shakaHand = null;
   fxBegin(dt);
   if (mode === 1) mode1(now, dt, false);
   else if (mode === 2) mode2(now, dt, false);
@@ -1897,6 +1926,237 @@ function handEffects(now, dt){
   fxEnd(dt);
 }
 
+/* ================= 🤙 Muka Hacker: face scan ala terminal =================
+   Tahan 🤙 (jempol + kelingking) buat nyalain / matiin. Jalan di mode apa aja.
+   Face tracker cuma jalan pas efek ini nyala, biar fps aman. */
+const FACE_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+let faceLm = null, faceLoading = null, FC = null;
+let hacker = false, hackerT = 0, hackerAmt = 0, hackerOffT = -1e9, lastBox = null;
+let faceT = null, faceD = null, faceSeen = 0, lastFaceVT = -1;
+let shakaT0 = 0, shakaLatch = false, shakaHand = null;
+const RAIN_CH = "01アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789ABCDEF<>/{}#$";
+const rndCh = () => RAIN_CH[(Math.random() * RAIN_CH.length) | 0];
+let rain = [], glitchUntil = 0, nextGlitch = 0, hexLine = "", hexT = 0;
+const subjectId = "0x" + Math.floor(Math.random() * 0xffff).toString(16).toUpperCase().padStart(4, "0");
+
+function chainOrder(edges){
+  const next = new Map(); edges.forEach(e => next.set(e.start, e.end));
+  const out = [edges[0].start];
+  for (let c = next.get(out[0]); c !== undefined && c !== out[0] && out.length <= edges.length; c = next.get(c)) out.push(c);
+  return out.length > 8 ? out : edges.map(e => e.start);
+}
+function loadFace(){
+  if (faceLm || faceLoading || !makeTask || !FaceLandmarkerCls) return;
+  faceLoading = makeTask(FaceLandmarkerCls, { baseOptions: { modelAssetPath: FACE_URL }, runningMode: "VIDEO", numFaces: 1,
+      minFaceDetectionConfidence: 0.5, minFacePresenceConfidence: 0.5, minTrackingConfidence: 0.5 })
+    .then(f => {
+      const C = FaceLandmarkerCls;
+      FC = { tess: C.FACE_LANDMARKS_TESSELATION, oval: chainOrder(C.FACE_LANDMARKS_FACE_OVAL),
+        feat: [...C.FACE_LANDMARKS_LEFT_EYE, ...C.FACE_LANDMARKS_RIGHT_EYE, ...C.FACE_LANDMARKS_LIPS, ...C.FACE_LANDMARKS_LEFT_EYEBROW, ...C.FACE_LANDMARKS_RIGHT_EYEBROW] };
+      faceLm = f;
+    })
+    .catch(e => { console.warn("Face tracker gagal dimuat", e); faceLoading = null; });
+}
+let faceTick = 0;
+function readFace(){
+  if (!faceLm || video.currentTime === lastFaceVT) return;
+  lastFaceVT = video.currentTime;
+  if (quality < 1 && ++faceTick % 2) return;             // fps lagi turun: scan muka selang-seling frame
+
+  let res;
+  try { res = faceLm.detectForVideo(video, performance.now()); } catch (e){ console.warn(e); return; }
+  const lm = res.faceLandmarks?.[0];
+  if (!lm) return;
+  const now = performance.now();
+  if (now - faceSeen > 500) faceD = null;                 // muka baru muncul lagi: jangan meluncur dari posisi lama
+  if (!faceT || faceT.length !== lm.length * 2) faceT = new Float32Array(lm.length * 2);
+  for (let i = 0; i < lm.length; i++){ faceT[i * 2] = lm[i].x * W; faceT[i * 2 + 1] = lm[i].y * H; }
+  faceSeen = now;
+}
+function toggleHacker(at){
+  hacker = !hacker;
+  const c = at || (lastBox ? { x: lastBox.cx, y: lastBox.cy } : { x: W / 2, y: H / 2 });
+  shockwave(c.x, c.y, 50 * SC, 140);
+  if (hacker){
+    hackerT = performance.now(); rain = []; loadFace();
+    burst(c.x, c.y, 70, 400, [140, 120, 165], 0.8); impact(c.x, c.y, 140, 0.3);
+  } else {
+    hackerOffT = performance.now();
+    burst(c.x, c.y, 40, 300, [140, 120], 0.6);
+  }
+  setDetect(hacker ? "🤙 Muka hacker nyala" : "🤙 Muka hacker mati", "ok", true);
+}
+/* Teks yang tetep kebaca walau layar dicerminin. align "left" = mulai dari x ke kanan (di layar). */
+function htext(t, x, y, px, color, alpha = 1, align = "left"){
+  ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+  ctx.font = `700 ${Math.round(px * SC)}px ui-monospace, "Cascadia Mono", Consolas, monospace`;
+  ctx.textBaseline = "middle"; ctx.textAlign = align;
+  if (mirrorEl.checked){ ctx.translate(x, y); ctx.scale(-1, 1); ctx.translate(-x, -y); }
+  ctx.fillStyle = color; ctx.fillText(t, x, y);
+  ctx.restore();
+}
+const fx = i => faceD[i * 2], fy = i => faceD[i * 2 + 1];
+function drawHacker(now, dt, live){
+  if (!hacker && hackerAmt <= 0 && now - hackerOffT > 900) return;
+  if (live && hacker) readFace();
+  const seen = live && hacker && faceT && now - faceSeen < 350;
+  hackerAmt = seen ? Math.min(1, hackerAmt + dt * 2.5) : Math.max(0, hackerAmt - dt * 2.5);
+  if (faceT){
+    if (!faceD || faceD.length !== faceT.length) faceD = Float32Array.from(faceT);
+    else { const k = 1 - Math.exp(-dt * 30); for (let i = 0; i < faceT.length; i++) faceD[i] += (faceT[i] - faceD[i]) * k; }
+  }
+  const boot = (now - hackerT) / 1000, G = "rgb(0,255,140)", GL = "rgb(190,255,210)";
+  const blink = Math.sin(now / 90) > -0.3;
+
+  if (hackerAmt > 0.01 && faceD && FC){
+    const a = hackerAmt * hackerAmt * (3 - 2 * hackerAmt);
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const i of FC.oval){ const x = fx(i), y = fy(i); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    const bw = x1 - x0, bh = y1 - y0, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    lastBox = { x0, y0, x1, y1, cx, cy };
+    const oval = () => { ctx.beginPath(); FC.oval.forEach((i, k) => k ? ctx.lineTo(fx(i), fy(i)) : ctx.moveTo(fx(i), fy(i))); ctx.closePath(); };
+
+    // 1) di dalam muka: tint hijau, scanline, hujan kode
+    ctx.save(); oval(); ctx.clip();
+    ctx.globalCompositeOperation = "color"; ctx.fillStyle = `rgba(0,255,110,${0.8 * a})`; ctx.fillRect(x0, y0, bw, bh);
+    ctx.globalCompositeOperation = "lighter"; ctx.fillStyle = `rgba(0,255,120,${0.07 * a})`; ctx.fillRect(x0, y0, bw, bh);
+    ctx.globalCompositeOperation = "source-over"; ctx.fillStyle = `rgba(0,0,0,${0.22 * a})`;
+    for (let y = y0 + (now / 40 % 4) * SC; y < y1; y += 4 * SC) ctx.fillRect(x0, y, bw, 1.5 * SC);
+    const colW = 13 * SC, cols = Math.max(4, Math.ceil(bw / colW)), len = 11;
+    while (rain.length < cols) rain.push({ y: Math.random() * 1.4 - 0.2, sp: 0.3 + Math.random() * 0.5, ch: [] });
+    ctx.globalCompositeOperation = "lighter";
+    ctx.font = `700 ${Math.round(12 * SC)}px ui-monospace, Consolas, monospace`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    if (mirrorEl.checked){ ctx.translate(cx, 0); ctx.scale(-1, 1); ctx.translate(-cx, 0); }
+    for (let c = 0; c < cols; c++){
+      const r = rain[c];
+      r.y += r.sp * dt;
+      if (r.y - len * 0.045 > 1){ r.y = -Math.random() * 0.4; r.sp = 0.3 + Math.random() * 0.5; }
+      const x = x0 + (c + 0.5) * colW;
+      for (let j = 0; j < len; j++){
+        const yy = r.y - j * 0.045;
+        if (yy < 0 || yy > 1) continue;
+        if (!r.ch[j] || Math.random() < 0.06) r.ch[j] = rndCh();
+        ctx.fillStyle = j ? `rgba(0,255,100,${(1 - j / len) * 0.6 * a})` : `rgba(220,255,230,${0.95 * a})`;
+        ctx.fillText(r.ch[j], x, y0 + yy * bh);
+      }
+    }
+    ctx.restore();
+
+    // 2) glitch: potongan muka geser sebentar, tiap beberapa detik
+    if (now > nextGlitch){ glitchUntil = now + 80 + Math.random() * 120; nextGlitch = now + 1800 + Math.random() * 3200; }
+    const glitching = now < glitchUntil;
+    if (glitching){
+      ctx.save(); oval(); ctx.clip();
+      for (let b = 0; b < 3; b++){
+        const by = y0 + Math.random() * bh, hh = (6 + Math.random() * 22) * SC, off = (Math.random() - 0.5) * 50 * SC;
+        ctx.drawImage(video, x0, by, bw, hh, x0 + off, by, bw, hh);
+        ctx.globalCompositeOperation = "lighter"; ctx.fillStyle = `rgba(${b % 2 ? "255,0,160" : "0,255,140"},0.35)`; ctx.fillRect(x0 + off, by, bw, hh);
+        ctx.globalCompositeOperation = "source-over";
+      }
+      ctx.restore();
+    }
+
+    // 3) wireframe mesh + titik + garis scan
+    ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.lineJoin = ctx.lineCap = "round";
+    ctx.strokeStyle = `rgba(0,255,120,${0.2 * a})`; ctx.lineWidth = 0.8 * SC; ctx.beginPath();
+    for (const e of FC.tess){ ctx.moveTo(fx(e.start), fy(e.start)); ctx.lineTo(fx(e.end), fy(e.end)); }
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(120,255,170,${0.85 * a})`; ctx.lineWidth = 1.6 * SC; ctx.beginPath();
+    for (const e of FC.feat){ ctx.moveTo(fx(e.start), fy(e.start)); ctx.lineTo(fx(e.end), fy(e.end)); }
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(0,255,140,${0.9 * a})`; ctx.lineWidth = 2 * SC; oval(); ctx.stroke();
+    const sy = y0 - bh * 0.1 + (now / 1700 % 1) * bh * 1.2, band = 20 * SC;
+    const n = faceD.length / 2;
+    for (let i = 0; i < n; i += 3){
+      const px = fx(i), py = fy(i), d = Math.abs(py - sy), b = d < band ? 1 - d / band : 0, s = (1.6 + b * 2.4) * SC;
+      ctx.fillStyle = b ? `rgba(220,255,230,${(0.4 + 0.6 * b) * a})` : `rgba(0,255,120,${0.35 * a})`;
+      ctx.fillRect(px - s / 2, py - s / 2, s, s);
+    }
+    const sg = ctx.createLinearGradient(0, sy - 36 * SC, 0, sy);
+    sg.addColorStop(0, "rgba(0,255,140,0)"); sg.addColorStop(1, `rgba(0,255,140,${0.3 * a})`);
+    ctx.fillStyle = sg; ctx.fillRect(x0 - 20 * SC, sy - 36 * SC, bw + 40 * SC, 36 * SC);
+    ctx.strokeStyle = `rgba(190,255,210,${0.9 * a})`; ctx.lineWidth = 2 * SC;
+    ctx.beginPath(); ctx.moveTo(x0 - 20 * SC, sy); ctx.lineTo(x1 + 20 * SC, sy); ctx.stroke();
+
+    // 4) bidikan di kedua mata
+    const eyes = n >= 478 ? [[468, 33, 133], [473, 362, 263]] : [[-1, 33, 133], [-1, 362, 263]];
+    for (const [ir, c1, c2] of eyes){
+      const ex = ir >= 0 ? fx(ir) : (fx(c1) + fx(c2)) / 2, ey = ir >= 0 ? fy(ir) : (fy(c1) + fy(c2)) / 2;
+      const er = Math.max(8 * SC, Math.hypot(fx(c1) - fx(c2), fy(c1) - fy(c2)) * 0.55);
+      ctx.strokeStyle = `rgba(0,255,140,${0.9 * a})`; ctx.lineWidth = 1.5 * SC;
+      ctx.setLineDash([er * 0.5, er * 0.3]); ctx.lineDashOffset = -now / 20;
+      ctx.beginPath(); ctx.arc(ex, ey, er, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(ex - er * 1.5, ey); ctx.lineTo(ex - er * 0.6, ey); ctx.moveTo(ex + er * 0.6, ey); ctx.lineTo(ex + er * 1.5, ey);
+      ctx.moveTo(ex, ey - er * 1.5); ctx.lineTo(ex, ey - er * 0.6); ctx.moveTo(ex, ey + er * 0.6); ctx.lineTo(ex, ey + er * 1.5);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(255,60,90,${0.9 * a * (blink ? 1 : 0.4)})`; ctx.beginPath(); ctx.arc(ex, ey, 2.2 * SC, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // 5) kotak target: ngunci dari gede ke pas muka pas baru nyala
+    const lk = Math.min(1, boot / 0.7), le = 1 - Math.pow(1 - lk, 3), grow = 1 + (1 - le) * 0.9 + (glitching ? (Math.random() - 0.5) * 0.04 : 0);
+    const hw = bw * 0.62 * grow, hh = bh * 0.6 * grow, L = Math.min(hw, hh) * 0.35;
+    const bx0 = cx - hw, bx1 = cx + hw, by0 = cy - hh, by1 = cy + hh;
+    ctx.strokeStyle = `rgba(0,255,140,${a * (lk < 1 && !blink ? 0.4 : 1)})`; ctx.lineWidth = 3 * SC; ctx.beginPath();
+    for (const [X, Y, sx, sy2] of [[bx0, by0, 1, 1], [bx1, by0, -1, 1], [bx0, by1, 1, -1], [bx1, by1, -1, -1]]){
+      ctx.moveTo(X + sx * L, Y); ctx.lineTo(X, Y); ctx.lineTo(X, Y + sy2 * L);
+    }
+    ctx.stroke();
+    ctx.lineWidth = 1.5 * SC; ctx.beginPath();
+    ctx.moveTo(cx, by0 - 8 * SC); ctx.lineTo(cx, by0 + 8 * SC); ctx.moveTo(cx, by1 - 8 * SC); ctx.lineTo(cx, by1 + 8 * SC);
+    ctx.moveTo(bx0 - 8 * SC, cy); ctx.lineTo(bx0 + 8 * SC, cy); ctx.moveTo(bx1 - 8 * SC, cy); ctx.lineTo(bx1 + 8 * SC, cy);
+    ctx.stroke();
+    ctx.restore();
+    const right = mirrorEl.checked ? -1 : 1;          // arah "kanan" di layar
+    const tagX = right > 0 ? bx0 : bx1;
+    htext(lk < 1 ? "ACQUIRING TARGET…" : seen ? "■ TARGET LOCKED" : "■ SIGNAL LOST", tagX, by0 - 16 * SC, 15, lk < 1 || !seen ? "rgb(255,210,90)" : G, a * (lk < 1 && !blink ? 0.5 : 1));
+
+    // 6) panel data di samping muka, ngetik pas baru nyala
+    if (now - hexT > 90){ hexT = now; hexLine = Array.from({ length: 18 }, () => "0123456789ABCDEF"[(Math.random() * 16) | 0]).join(""); }
+    const nl = 1, ll = 234, rr = 454;
+    const dl = Math.hypot(fx(nl) - fx(ll), fy(nl) - fy(ll)), dr = Math.hypot(fx(nl) - fx(rr), fy(nl) - fy(rr));
+    const yaw = (dl - dr) / ((dl + dr) || 1) * 90 * right;
+    const lines = [
+      `> SUBJECT ${subjectId}`,
+      `MATCH   ${(97.2 + Math.sin(now / 700) * 1.6).toFixed(1)}%`,
+      `POS     X${String(cx | 0).padStart(4, "0")} Y${String(cy | 0).padStart(4, "0")}`,
+      `YAW     ${yaw >= 0 ? "+" : ""}${yaw.toFixed(1)}°`,
+      `MESH    ${n} PTS`,
+      `STATUS  ${seen ? "TRACKING" : "SIGNAL LOST"}`,
+      hexLine
+    ];
+    const px = (right > 0 ? bx1 : bx0) + right * 34 * SC, py = by0 + 10 * SC, lh = 20 * SC, pw = 230 * SC;
+    ctx.save(); ctx.fillStyle = `rgba(0,20,10,${0.55 * a})`;
+    ctx.fillRect(right > 0 ? px - 10 * SC : px - pw + 10 * SC, py - 16 * SC, pw, lines.length * lh + 14 * SC);
+    ctx.globalCompositeOperation = "lighter"; ctx.strokeStyle = `rgba(0,255,140,${0.7 * a})`; ctx.lineWidth = 1.5 * SC;
+    ctx.beginPath(); ctx.moveTo(right > 0 ? bx1 : bx0, by0 + L); ctx.lineTo(px - right * 10 * SC, py - 16 * SC); ctx.stroke();
+    ctx.restore();
+    const typed = Math.max(0, (boot - 0.4) * 60);
+    let used = 0;
+    lines.forEach((t, i) => {
+      const show = Math.min(t.length, Math.floor(typed - used)); used += t.length;
+      if (show <= 0) return;
+      htext(t.slice(0, show) + (show < t.length && blink ? "█" : ""), px, py + i * lh, 14, i === 0 ? GL : i === lines.length - 1 ? "rgba(0,255,140,0.55)" : G, a);
+    });
+  }
+
+  // booting / nyari muka / mati
+  if (hacker && live && boot < 1.3){
+    const k = Math.min(1, boot / 1.1), bx = lastBox && seen ? lastBox.cx : W / 2, by = lastBox && seen ? lastBox.y1 + 50 * SC : H * 0.82;
+    htext("INITIALIZING FACE SCAN", bx, by, 18, G, blink ? 1 : 0.6, "center");
+    const w = 240 * SC, h = 10 * SC, x = bx - w / 2;
+    ctx.save(); ctx.strokeStyle = G; ctx.lineWidth = 1.5 * SC; ctx.strokeRect(x, by + 18 * SC, w, h);
+    ctx.fillStyle = G; ctx.fillRect(mirrorEl.checked ? x + w * (1 - k) : x, by + 18 * SC, w * k, h); ctx.restore();
+    htext(`${Math.round(k * 100)}%`, bx, by + 44 * SC, 14, GL, 1, "center");
+  } else if (hacker && live && !seen && blink){
+    htext(faceLm ? "▒ SCANNING FOR FACE…" : "▒ LOADING FACE AI…", W / 2, 70 * SC, 20, "rgb(255,210,90)", 0.9, "center");
+  }
+  if (!hacker && now - hackerOffT < 900 && lastBox){
+    const k = (now - hackerOffT) / 900;
+    if (Math.random() > k * 0.7) htext("✖ DISCONNECTED", lastBox.cx, lastBox.cy, 26, "rgb(255,70,90)", 1 - k, "center");
+  }
+}
+
 /* ================= Main loop ================= */
 let prev = performance.now(), frameAvg = 1 / 60;
 function loop(now){
@@ -1910,13 +2170,16 @@ function loop(now){
 
   if (state === "visible"){
     ctx.drawImage(video, 0, 0, W, H);
+    drawHacker(now, dt, true);
     handEffects(now, dt);
     if (segmenter && ++warmTick % 20 === 0) readMask();
   } else if (state === "hidden"){
     drawBg(ctx, W, H);
+    drawHacker(now, dt, false);
     handEffectsIdle(now, dt);
   } else {
     transitionFrame(now);
+    drawHacker(now, dt, false);
     handEffectsIdle(now, dt);
   }
   drawDust(dt);
@@ -1962,6 +2225,7 @@ addEventListener("keydown", e => {
   else if (e.key === "p" || e.key === "P") nextFilter(-1);
   else if (e.key === "c" || e.key === "C"){ strokes = []; curStroke = null; }
   else if (e.key === "h" || e.key === "H") document.body.classList.toggle("clean");
+  else if (e.key === "g" || e.key === "G") toggleHacker();
   else if (e.key === "f" || e.key === "F"){
     if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().catch(() => {});
   }
