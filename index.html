@@ -2573,7 +2573,7 @@ function drawDiag(now){
   ];
   const x = mirrorEl.checked ? W - 16 * SC : 16 * SC, y0 = 24 * SC;
   ctx.save(); ctx.fillStyle = "rgba(0,0,0,0.6)";
-  const pw = 520 * SC; ctx.fillRect(mirrorEl.checked ? x - pw + 8 * SC : x - 8 * SC, y0 - 16 * SC, pw, lines.length * 22 * SC + 12 * SC);
+  const pw = 680 * SC; ctx.fillRect(mirrorEl.checked ? x - pw + 8 * SC : x - 8 * SC, y0 - 16 * SC, pw, lines.length * 22 * SC + 12 * SC);
   ctx.restore();
   lines.forEach((t, i) => htext(t, x, y0 + i * 22 * SC, 15, t.startsWith("⚠") ? "#ffb547" : "#7dffb0", 1));
 }
