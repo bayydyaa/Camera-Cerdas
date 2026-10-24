@@ -758,6 +758,7 @@ function readHands(){
       fist: (!idx && !mid && !ring && !pink) || (name === "Closed_Fist" && score > 0.6),
       thumbDown: name === "Thumb_Down" && score > 0.6,
       shaka: thumb && pink && !idx && !mid && !ring,          // 🤙
+      midNow: raw[1],                                         // jari tengah frame ini (tanpa debounce)
       size: Math.hypot((lm[0].x - lm[9].x) * W, (lm[0].y - lm[9].y) * H),   // piksel asli (x dan y beda skala)
       center: fp(9),
       palm: palmC,
@@ -1095,7 +1096,7 @@ function mode1(now, dt, fresh){
       // ☝️ = gambar, ✌️ = berhenti (kursor doang), ✊ = ledak
       const canStart = h.idx && !h.mid && !h.ring && !h.pink;
       const canKeep = h.idx && !h.mid;
-      const hover = h.idx && h.mid;
+      const hover = h.idx && (h.mid || h.midNow);             // berhenti seketika, mulai lagi nunggu debounce
       if (hover){ hoverT = now; hoverP = { x: (h.p8.x + h.p12.x) / 2, y: (h.p8.y + h.p12.y) / 2 }; curStroke = null; }
       if (!hover && (drawing ? canKeep : canStart) && now > blockDrawUntil){
         const t = now / 1000;
